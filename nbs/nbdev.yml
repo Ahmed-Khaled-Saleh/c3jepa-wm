@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "c3jepa-wm"
+  site-url: "https://Ahmed-Khaled-Saleh.github.io/c3jepa-wm"
+  description: "Communication Control Co-adaptive JEPA-World Model"
+  repo-branch: main
+  repo-url: "https://github.com/Ahmed-Khaled-Saleh/c3jepa-wm"
