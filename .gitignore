@@ -150,3 +150,11 @@ checklink/cookies.txt
 
 # Quarto
 .quarto
+
+
+# numpy formats
+*.npy
+*.npz
+
+*.png
+*.pdf
