@@ -155,6 +155,7 @@ checklink/cookies.txt
 # numpy formats
 *.npy
 *.npz
+*.csv
 
 *.png
 *.pdf
