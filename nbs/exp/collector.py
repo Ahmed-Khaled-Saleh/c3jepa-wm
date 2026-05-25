@@ -269,8 +269,8 @@ def collect_dataset(
 
 if __name__ == "__main__":
     collect_dataset(
-        n_rollouts=3,
-        max_steps=150,
+        n_rollouts=10,
+        max_steps=250,
         data_dir="./data/rollouts",
         n_agents=2,
         n_workers=4,
