@@ -5,16 +5,16 @@
 # %% auto #0
 __all__ = ['Tensor', 'parser', 'args', 'wandb_logger', 'model_params', 'model', 'experiment', 'data', 'runner', 'VAEXperiment']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #f697b274
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #52fd3b54
 import torch
 import torch.nn as nn
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #efd89597
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #10cd5dab
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #40df53e9
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #9a84b3e3
 import os
 import math
 import torch
@@ -141,7 +141,7 @@ class VAEXperiment(pl.LightningModule):
         except:
             return optims
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #927fdd44
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #1bb1127f
 import os
 import yaml
 import argparse
@@ -180,7 +180,7 @@ with open(args.filename, 'r') as file:
 wandb_logger = WandbLogger(save_dir=config['logging_params']['save_dir'],
                            name=config['model_params']['name'],
                            log_model="all",)
-
+wandb_logger.experiment.config["log_dir"] = config['logging_params']['save_dir']
 
 # For reproducibility
 seed_everything(config['exp_params']['manual_seed'], True)
@@ -198,7 +198,7 @@ runner = Trainer(logger=wandb_logger,
                  callbacks=[
                      LearningRateMonitor(),
                      ModelCheckpoint(save_top_k=2, 
-                                     dirpath =os.path.join(wandb_logger.log_dir , "checkpoints"), 
+                                     dirpath =os.path.join("." , "checkpoints"), 
                                      monitor= "val_loss",
                                      save_last= True),
                  ],
