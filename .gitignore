@@ -156,6 +156,7 @@ checklink/cookies.txt
 *.npy
 *.npz
 *.csv
+*.h5
 
 *.png
 *.pdf
