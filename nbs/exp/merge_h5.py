@@ -27,7 +27,7 @@ def merge_npz_to_hdf5(data_dir: str, out_path: str):
             grp  = h5.create_group(name)
             for k in data.files:
                 arr = data[k]
-    
+                
                 if arr.ndim == 0:
                     # Save scalar metadata as an HDF5 attribute on the group instead of a dataset
                     grp.attrs[k] = arr.item()  # .item() converts numpy scalar to native Python type

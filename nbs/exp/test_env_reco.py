@@ -19,33 +19,36 @@ action_mapping = {
 
 agents = [i for i in range(2)]
 
-lst_actions = [] 
-lst_dirs = []
+# lst_actions = [] 
+# lst_dirs = []
 done = False
 step = 0
 
 
+rollout = np.load(f'./data/rollouts/rollout_{0}.npz', allow_pickle=True)
+lst_actions = [rollout['0_act'], rollout['1_act']]
 obs, info = env.reset(seed= 0)
 
-lst_dirs.append({f"agent_{i}": (agent.state.dir, agent.state.pos) for i, agent in enumerate(env.unwrapped.agents)})
+# lst_dirs.append({f"agent_{i}": (agent.state.dir, agent.state.pos) for i, agent in enumerate(env.unwrapped.agents)})
 
 while not done and step < 150:
-    actions = {i: env.action_space[i].sample() for i in range(2)}
-
+    # actions = {i: env.action_space[i].sample() for i in range(2)}
+    actions = {i: int(lst_actions[i][step]) for i in range(2)}
+    
     # import ipdb; ipdb.set_trace()  # Debug point to inspect variables before stepping through the environment
     print(f"Step {step}, Actions: { {f'agent_{i}': action_mapping[actions[agent]] for i, agent in enumerate(agents)} }")
     
     obs, rewards, terminations, truncations, info = env.step(actions)
     
-    lst_actions.append({agent: action_mapping[action] for agent, action in actions.items()})
-    lst_dirs.append({f"agent_{i}": (agent.state.dir, agent.state.pos) for i, agent in enumerate(env.unwrapped.agents)})  # Record AFTER
+    # lst_actions.append({agent: action_mapping[action] for agent, action in actions.items()})
+    # lst_dirs.append({f"agent_{i}": (agent.state.dir, agent.state.pos) for i, agent in enumerate(env.unwrapped.agents)})  # Record AFTER
     
     done = all(terminations.values()) or all(truncations.values())
     step += 1
     
 env.export_frames(save_root=".")
-np.save("actions.npy", np.array(lst_actions))
-np.save("directions.npy", np.array(lst_dirs))
+# np.save("actions.npy", np.array(lst_actions))
+# np.save("directions.npy", np.array(lst_dirs))
 
 env.close()
 
