@@ -38,5 +38,5 @@ def merge_npz_to_hdf5(data_dir: str, out_path: str):
 
     print(f"Merged {len(files)} rollouts → {out_path}")
 
-if __name__ == "__main__":
-    merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
+# if __name__ == "__main__":
+#     merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
