@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --account=project_2009050
 #SBATCH --job-name=data_collection
-#SBATCH --partition=medium
+#SBATCH --partition=large
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=128
 #SBATCH --time=8:00:00
