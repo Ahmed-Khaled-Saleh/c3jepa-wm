@@ -269,10 +269,10 @@ def collect_dataset(
 
 if __name__ == "__main__":
     collect_dataset(
-        n_rollouts=100,
+        n_rollouts=10_000,
         max_steps=150,
-        data_dir="./data/rollouts",
+        data_dir="/scratch/project_2009050/datasets/MarlGridV3",
         n_agents=2,
-        n_workers=4,
+        n_workers=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
         base_seed=0,
     )
