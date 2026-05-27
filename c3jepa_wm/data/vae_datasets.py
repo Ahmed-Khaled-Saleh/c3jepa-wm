@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MyDataset', 'MyCelebA', 'OxfordPets', 'VAEDataset']
 
-# %% ../../nbs/00b1_data.vae_dataset.ipynb #c9b4dcd8
+# %% ../../nbs/00b1_data.vae_dataset.ipynb #890e9723
 import os
 import torch
 from torch import Tensor

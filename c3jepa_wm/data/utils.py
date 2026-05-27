@@ -6,19 +6,19 @@
 __all__ = ['H_full_url', 'valid_2d_url', 'csi_data_url', 'base_tf', 'denormalize_tf', 'lejepa_train_tf', 'lejepa_test_tf',
            'data_loader', 'gdown_download_file', 'get_h_full', 'get_valid_2d', 'get_csi_data', 'np_get_csi',
            'np_get_all_from', 'np_get_neighbors_csi', 'build_csi_index', 'df_get_csi', 'df_get_all_from',
-           'df_get_neighbors_csi', 'get_data_path', 'init_data_single', 'show_batch', 'init_data_dist', 'init_data']
+           'df_get_neighbors_csi', 'get_data_path']
 
-# %% ../../nbs/01c_data.utils.ipynb #445299b7
+# %% ../../nbs/01c_data.utils.ipynb #3c13d2df
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/01c_data.utils.ipynb #3473c665
+# %% ../../nbs/01c_data.utils.ipynb #533b9000
 import numpy as np
 import pandas as pd
 import torch
 import gdown
 
-# %% ../../nbs/01c_data.utils.ipynb #8ab7ffb0
+# %% ../../nbs/01c_data.utils.ipynb #f1d5704d
 import pytorch_lightning as pl
 
 
@@ -42,7 +42,7 @@ def data_loader(fn):
 
     return func_wrapper
 
-# %% ../../nbs/01c_data.utils.ipynb #a1c1bd47
+# %% ../../nbs/01c_data.utils.ipynb #6213ca0d
 def gdown_download_file(url: str, output: str= ".") -> None:
     """Downloads a file from the given URL and saves it to the specified output path.
     Args:
@@ -51,13 +51,13 @@ def gdown_download_file(url: str, output: str= ".") -> None:
     """
     gdown.download(url, output)
 
-# %% ../../nbs/01c_data.utils.ipynb #bf6c0109
+# %% ../../nbs/01c_data.utils.ipynb #64e07d21
 H_full_url = "https://drive.google.com/file/d/126gvv5GBgzgG21y19fza5vHBtFGxRWMq/view?usp=sharing"
 valid_2d_url = "https://drive.google.com/file/d/1Dzj9joHNG434-ZQy3lIEBlscFvw_jH0w/view?usp=sharing"
 csi_data_url = "https://drive.google.com/file/d/1bAQEiAvFU-oNeb_UuFO8nOD0NKaL08le/view?usp=sharing"
 
 
-# %% ../../nbs/01c_data.utils.ipynb #c416fd1d
+# %% ../../nbs/01c_data.utils.ipynb #aaf9e8f6
 def get_h_full(H_full_url: str = H_full_url) -> np.ndarray:
     gdown_download_file(H_full_url, "H_full.npy")
     return np.load("H_full.npy")
@@ -71,7 +71,7 @@ def get_csi_data(csi_data_url: str = csi_data_url) -> pd.DataFrame:
     return pd.read_csv("csi_data.csv")
 
 
-# %% ../../nbs/01c_data.utils.ipynb #28452fb3
+# %% ../../nbs/01c_data.utils.ipynb #df9d85f6
 def np_get_csi(H_full: np.ndarray, grid_to_idx: dict, tx_grid: tuple, rx_grid: tuple) -> np.ndarray:
     """
     Get CFR for a D2D link between two grid positions.
@@ -105,7 +105,7 @@ def np_get_neighbors_csi(H_full: np.ndarray, grid_to_idx: dict, tx_grid: tuple, 
 
 
 
-# %% ../../nbs/01c_data.utils.ipynb #7d201efb
+# %% ../../nbs/01c_data.utils.ipynb #32397289
 # Assuming df has columns: tx_grid, rx_grid, csi
 # and tuples are stored as (gx, gy)
 
@@ -146,7 +146,7 @@ def df_get_neighbors_csi(csi_data: pd.DataFrame, tx_grid: tuple, radius: int = 1
     )
     return csi_data[mask]
 
-# %% ../../nbs/01c_data.utils.ipynb #1f49bc63
+# %% ../../nbs/01c_data.utils.ipynb #e8d929e1
 import torch
 from torchvision.transforms import v2
 base_tf = v2.Compose([
@@ -161,7 +161,7 @@ denormalize_tf = v2.Compose([
     v2.Normalize(mean=[-0.5, -0.5, -0.5], std=[1., 1., 1.]),
 ])
 
-# %% ../../nbs/01c_data.utils.ipynb #fc4ba40e
+# %% ../../nbs/01c_data.utils.ipynb #4f72eb6a
 import torch
 from torchvision.transforms import v2
 lejepa_train_tf = v2.Compose(
@@ -190,7 +190,7 @@ lejepa_test_tf = v2.Compose(
             ]
         )
 
-# %% ../../nbs/01c_data.utils.ipynb #fb69edfc
+# %% ../../nbs/01c_data.utils.ipynb #fc685849
 import os
 def get_data_path():
     paths = {
@@ -207,107 +207,4 @@ def get_data_path():
             print(f"Data path found for hostname: {hostname}")
             return path
     raise FileNotFoundError("No valid data path found for this hostname.")
-
-
-# %% ../../nbs/01c_data.utils.ipynb #25004cad
-import torch
-
-from mawm.data.loaders import MarlGridDataset
-def init_data_single(cfg):
-    cfg.data.data_dir = get_data_path()
-
-    train_ds = MarlGridDataset(
-        cfg= cfg,
-        train= True,
-        transform= base_tf,
-        msg_tf= msg_tf
-    )
-
-    data_loader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=cfg.data.batch_size,
-        drop_last=cfg.data.loader.drop_last,
-        shuffle= True,
-    )
-    sampler = None
-
-
-    return data_loader, sampler
-
-
-# %% ../../nbs/01c_data.utils.ipynb #a822af14
-import matplotlib.pyplot as plt
-import numpy as np
-import torchvision
-import torch
-import einops
-def show_batch(dl, denormalize_tf, save_to="./batch.png"):
-    dataiter = iter(dl)
-    data = next(dataiter)
-    images = data['agent_0']['obs']
-
-    if images.ndim == 5:
-        images = einops.rearrange(images, 'b s c h w -> (b s) c h w')
-        print(images.shape)
-
-    print(f"Max pixel value: {images.max().item()}")
-    print(f"Mean pixel value: {images.mean().item()}")
-    images = denormalize_tf(images) if denormalize_tf is not None else images
-    print(f"After denormalization:")
-    print("+"*20)
-    print(f"Max pixel value: {images.max().item()}")
-    print(f"Mean pixel value: {images.mean().item()}")
-    images = torch.clamp(images, 0, 1)
-
-    grid_img = torchvision.utils.make_grid(images, nrow=8) # nrow controls how many images per row
-    np_grid = torch.einsum('chw->hwc', grid_img).numpy()
-
-
-    plt.figure(figsize=(15, 10))
-    plt.imshow(np_grid)
-    plt.axis('off')
-    plt.savefig(save_to, bbox_inches='tight')
-    plt.savefig("pdf.pdf", bbox_inches='tight')
-    plt.show()
-
-# %% ../../nbs/01c_data.utils.ipynb #1b2ad590
-import torch
-def init_data_dist(
-        cfg,
-        train= True,
-        collator=torch.utils.data.default_collate,
-):
-    cfg.data.data_dir = get_data_path()
-    train_ds = MarlGridDataset(
-        cfg= cfg,
-        train= train,
-        transform= base_tf,
-        msg_tf= msg_tf
-    )
-
-    dist_sampler = torch.utils.data.distributed.DistributedSampler(train_ds)
-
-    data_loader = torch.utils.data.DataLoader(
-        train_ds,
-        collate_fn=collator,
-        sampler=dist_sampler,
-        batch_size=cfg.data.batch_size,
-        drop_last=cfg.data.loader.drop_last,
-        pin_memory=cfg.data.loader.pin_memory,
-        num_workers=cfg.data.loader.num_workers,
-        persistent_workers=(cfg.data.loader.num_workers > 0) and cfg.data.loader.persistent_workers,
-    )
-
-    # logger.info("VideoDataset unsupervised data loader created")
-
-    return data_loader, dist_sampler
-
-
-
-# %% ../../nbs/01c_data.utils.ipynb #2269ae01
-def init_data(cfg, distributed= False):
-    if distributed:
-        return init_data_dist(cfg)
-    else:
-        return init_data_single(cfg)
 

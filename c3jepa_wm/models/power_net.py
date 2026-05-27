@@ -5,24 +5,24 @@
 # %% auto #0
 __all__ = ['lin_layer', 'inp', 'out', 'BatchNorm1d', 'CSIEncoder', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #2f4ff4e2
+# %% ../../nbs/02b_models.powernet.ipynb #487ec1e3
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02b_models.powernet.ipynb #768b5e42
+# %% ../../nbs/02b_models.powernet.ipynb #a61b1889
 import torch
 import torch.nn as nn
 
 
-# %% ../../nbs/02b_models.powernet.ipynb #64a49a3a
+# %% ../../nbs/02b_models.powernet.ipynb #cb33fa11
 lin_layer = nn.Linear(2, 20)
 inp = torch.randn(5, 2)
 out = lin_layer(inp)
 out.shape
 
-# %% ../../nbs/02b_models.powernet.ipynb #806ed598
+# %% ../../nbs/02b_models.powernet.ipynb #19d77ea5
 class BatchNorm1d(nn.Module):
     def __init__(self, num_features: int):
         super(BatchNorm1d, self).__init__()
