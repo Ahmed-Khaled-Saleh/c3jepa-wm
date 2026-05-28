@@ -5,16 +5,16 @@
 # %% auto #0
 __all__ = ['Tensor', 'parser', 'args', 'wandb_logger', 'model_params', 'model', 'experiment', 'data', 'runner', 'VAEXperiment']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #13b15a36
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #b47ac785
 import torch
 import torch.nn as nn
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #8c3b618a
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #3191807a
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #6c1982c0
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #d71b4d3a
 import os
 import math
 import torch
@@ -141,7 +141,7 @@ class VAEXperiment(pl.LightningModule):
         except:
             return optims
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #c7ed7d91
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #06da242b
 import os
 import yaml
 import argparse

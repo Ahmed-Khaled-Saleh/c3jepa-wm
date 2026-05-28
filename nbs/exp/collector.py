@@ -25,24 +25,29 @@ def collect_channel(env, agent_idx, terminations, d= 1):
     Querry precollected H_full for the channel between tx_position and each of the rx_positions.
     return array of shape (len(rx_positions), d) where each row is the channel vector for that rx_position.
     """
-    if terminations[agent_idx]:
-        all_csi = np.zeros((len(env.agents) - 1, d), dtype=np.complex128)  # no valid CSI if agent is terminated
-        return all_csi
-    
-    tx_position = env.agents[agent_idx].state.pos
-    rx_positions = [ag.state.pos for ag in env.agents if ag != env.agents[agent_idx] and not terminations[ag.index]]
+    all_csi = np.zeros((len(env.agents) - 1, d), dtype=np.complex128)  # default to zero CSI
 
-    if len(rx_positions) == 0:
-        all_csi = np.zeros((len(env.agents) - 1, d), dtype=np.complex128) 
-        return all_csi
-    
-    csi_values = []
-    for pos in rx_positions:
-        h = [np_get_csi(H_full, grid_to_idx, tx_position, pos)]
-        csi_values.append(h)
+    tx_position = env.agents[agent_idx].state.pos if not terminations[agent_idx] else env.goal_pos
+    rx_positions = [ag.state.pos for ag in env.agents if ag != env.agents[agent_idx]]
+    # rx_positions = [env.goal_pos if terminations[ag.index] else ag.state.pos for ag in env.agents if ag != env.agents[agent_idx]]
 
-    all_csi = np.array(csi_values, dtype=np.complex128).reshape(len(env.agents) - 1, d)
+    rx_positions_2 = []
+    for pos, ag in zip(rx_positions, env.agents):
+        if ag.index == agent_idx:
+            continue
+
+        if terminations[ag.index]:
+            rx_positions_2.append(env.goal_pos)
+        else:
+            rx_positions_2.append(pos)
     
+    for pos in rx_positions_2:
+        if pos == tx_position:  # only compute CSI if positions are different
+            continue
+        
+        h = np_get_csi(H_full, grid_to_idx, tx_position, pos)
+        all_csi[rx_positions_2.index(pos)] = h
+
     return all_csi
 
 
@@ -329,13 +334,13 @@ def collect_dataset(
 
 if __name__ == "__main__":
     collect_dataset(
-        n_rollouts=10,#10_000,
+        n_rollouts=10_000,
         max_steps=150,
-        # data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
+        data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
         n_agents=2,
-        n_workers=4,#int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
+        n_workers=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
         base_seed=0,
     )
 
-    # from merge_h5 import merge_npz_to_hdf5
-    # merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
+    from merge_h5 import merge_npz_to_hdf5
+    merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
