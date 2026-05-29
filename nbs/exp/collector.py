@@ -339,13 +339,13 @@ def collect_dataset(
 
 if __name__ == "__main__":
     collect_dataset(
-        n_rollouts=10,#10_000,
+        n_rollouts=10_000,
         max_steps=150,
-        # data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
+        data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
         n_agents=2,
-        n_workers=4,#int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
+        n_workers=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
         base_seed=0,
     )
 
-    # from merge_h5 import merge_npz_to_hdf5
-    # merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
+    from merge_h5 import merge_npz_to_hdf5
+    merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
