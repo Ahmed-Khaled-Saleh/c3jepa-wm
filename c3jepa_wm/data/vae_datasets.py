@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentPOVDataset', 'VAEDataset']
 
-# %% ../../nbs/00b1_data.vae_dataset.ipynb #e09ccc73
+# %% ../../nbs/00b1_data.vae_dataset.ipynb #0a62d3c1
 import os
 import torch
 from torch import Tensor
@@ -93,7 +93,7 @@ class MultiAgentPOVDataset(Dataset):
             self.file = None
 
 
-# %% ../../nbs/00b1_data.vae_dataset.ipynb #cec76a77
+# %% ../../nbs/00b1_data.vae_dataset.ipynb #8ef4ee38
 class VAEDataset(LightningDataModule):
     """
     PyTorch Lightning data module 

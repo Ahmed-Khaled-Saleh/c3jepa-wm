@@ -27,26 +27,19 @@ def collect_channel(env, agent_idx, terminations, d= 1):
     """
     all_csi = np.zeros((len(env.agents) - 1, d), dtype=np.complex128)  # default to zero CSI
 
-    tx_position = env.agents[agent_idx].state.pos if not terminations[agent_idx] else env.goal_pos
-    rx_positions = [ag.state.pos for ag in env.agents if ag != env.agents[agent_idx]]
-    # rx_positions = [env.goal_pos if terminations[ag.index] else ag.state.pos for ag in env.agents if ag != env.agents[agent_idx]]
+    tx_agent = env.agents[agent_idx]
+    rx_agent = env.agents[1 if agent_idx == 0 else 0]
 
-    rx_positions_2 = []
-    for pos, ag in zip(rx_positions, env.agents):
-        if ag.index == agent_idx:
-            continue
+    # Resolve actual positions
+    tx_position = tx_agent.state.pos if not terminations[tx_agent.index] else env.goal_pos
+    rx_position = rx_agent.state.pos if not terminations[rx_agent.index] else env.goal_pos
 
-        if terminations[ag.index]:
-            rx_positions_2.append(env.goal_pos)
-        else:
-            rx_positions_2.append(pos)
-    
-    for pos in rx_positions_2:
-        if pos == tx_position:  # only compute CSI if positions are different
-            continue
-        
-        h = np_get_csi(H_full, grid_to_idx, tx_position, pos)
-        all_csi[rx_positions_2.index(pos)] = h
+    # Only look up CSI if positions are different and valid
+    if tx_position != rx_position:
+        # Extra safety check just in case an agent steps out-of-bounds
+        if tx_position in grid_to_idx and rx_position in grid_to_idx:
+            h = np_get_csi(H_full, grid_to_idx, tx_position, rx_position)
+            all_csi[0] = h
 
     return all_csi
 
@@ -338,15 +331,18 @@ def collect_dataset(
 
 
 if __name__ == "__main__":
-    print(grid_to_idx)
-    # collect_dataset(
-    #     n_rollouts=10_000,
-    #     max_steps=150,
-    #     data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
-    #     n_agents=2,
-    #     n_workers=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
-    #     base_seed=0,
-    # )
+    collect_dataset(
+        n_rollouts=10_000,
+        # n_rollouts=10,
+        max_steps=150,
+        data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
+        # data_dir="./data/rollouts",
+        n_agents=2,
+        n_workers= int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
+        # n_workers=4,
+        base_seed=0,
+    )
 
-    # from merge_h5 import merge_npz_to_hdf5
-    # merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
+    from merge_h5 import merge_npz_to_hdf5
+    merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
+    # merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
