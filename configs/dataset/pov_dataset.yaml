@@ -1,12 +1,13 @@
-data_params:
-  data_path: "Data/"
-  train_batch_size: 64
-  val_batch_size:  64
-  patch_size: 64
-  num_workers: 4
+# data_params:
+#   data_path: "Data/"
+#   train_batch_size: 64
+#   val_batch_size:  64
+#   patch_size: 64
+#   num_workers: 4
 
 
-h5_path: "/path/to/your/dataset.h5"
-val_ratio: 0.1
-batch_size: 64
+data_path: "/scratch/project_2009050/datasets/findgoal/dataset.h5"
+# val_ratio: 0.1
+train_batch_size: 64
+val_batch_size: 64
 num_workers: 4

@@ -6,7 +6,7 @@
 #   img_size: 64
 #   beta: 0.25
 
-name: "VQVAE_Gridworld"
+name: "VQVAE"
 in_channels: 3
 embedding_dim: 64
 num_embeddings: 512
