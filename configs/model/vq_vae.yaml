@@ -1,0 +1,16 @@
+# model_params:
+#   name: 'VQVAE'
+#   in_channels: 3
+#   embedding_dim: 64
+#   num_embeddings: 512
+#   img_size: 64
+#   beta: 0.25
+
+name: "VQVAE_Gridworld"
+in_channels: 3
+embedding_dim: 64
+num_embeddings: 512
+hidden_dims: [128, 256]
+beta: 0.25
+img_size: 64
+

@@ -1,0 +1,14 @@
+defaults:
+  - _self_
+  - model: vq_vae
+  - dataset: pov_dataset
+
+exp_params:
+  manual_seed: 1234
+  kld_weight: 1.0
+  max_epochs: 50
+  lr: 0.001
+
+logging_params:
+  save_dir: "./logs"
+  ckp_dir: "checkpoints"
