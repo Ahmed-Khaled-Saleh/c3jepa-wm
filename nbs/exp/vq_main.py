@@ -23,6 +23,7 @@ def main():
     with open(file_name, "r") as file:
         config = yaml.safe_load(file)
 
+    config['data_params']['data_dir'] = "/scratch/project_2009050/datasets/dataset.h5"
     seed_everything(config["exp_params"]["manual_seed"])
 
     # --- 2. Determine Local HW Runtime Device ---
