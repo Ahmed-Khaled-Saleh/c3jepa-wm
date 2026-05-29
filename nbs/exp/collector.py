@@ -206,6 +206,7 @@ def collect_one_rollout(args):
     episode_len = 0
     success     = False
     success_at  = -1
+    agents_success_at = {ag: -1 for ag in agents}  # track individual agent success time steps
 
     # ── Rollout loop ──────────────────────────────────────────────────────────
     for t in range(max_steps):
@@ -243,6 +244,9 @@ def collect_one_rollout(args):
             agent_data[ag]["csi"].append(
                 collect_channel(env.unwrapped, ag, terminations))
 
+            if terminations[ag] and agents_success_at[ag] == -1:
+                agents_success_at[ag] = t  # record first time step of success for this agent
+                
         episode_len += 1
 
         if done or t == max_steps - 1:
@@ -276,6 +280,7 @@ def collect_one_rollout(args):
         'episode_len': episode_len,
         'success':     success,
         'success_at':  success_at,
+        'agents_success_at': np.array(list(agents_success_at.values())),  # include individual agent success times
         'seed':        seed,
         'policy':      policy,           # which policy was used
         'layout':      layout,
@@ -334,13 +339,13 @@ def collect_dataset(
 
 if __name__ == "__main__":
     collect_dataset(
-        n_rollouts=10_000,
+        n_rollouts=10,#10_000,
         max_steps=150,
-        data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
+        # data_dir="/scratch/project_2009050/datasets/findgoal/rollouts",
         n_agents=2,
-        n_workers=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
+        n_workers=4,#int(os.environ.get("SLURM_CPUS_PER_TASK", 1)),
         base_seed=0,
     )
 
-    from merge_h5 import merge_npz_to_hdf5
-    merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
+    # from merge_h5 import merge_npz_to_hdf5
+    # merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
