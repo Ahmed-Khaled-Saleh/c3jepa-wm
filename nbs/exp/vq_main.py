@@ -19,7 +19,7 @@ def seed_everything(seed):
 
 def main():
     # --- 1. Load Configuration File ---
-    file_name = "/projappl/project_2009050/c3jepa-wm/nbs/exp/configs/vq_vae.yaml"
+    file_name = "/projappl/project_2009050/c3jepa-wm/configs/vq_vae.yaml"
     with open(file_name, "r") as file:
         config = yaml.safe_load(file)
 
