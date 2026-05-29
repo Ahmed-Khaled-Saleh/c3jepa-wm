@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentPOVDataset', 'VAEDataset']
 
-# %% ../../nbs/00b1_data.vae_dataset.ipynb #d38ac3fa
+# %% ../../nbs/00b1_data.vae_dataset.ipynb #90da21f6
 import os
 import torch
 from torch import Tensor

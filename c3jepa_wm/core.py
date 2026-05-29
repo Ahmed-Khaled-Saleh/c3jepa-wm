@@ -5,6 +5,6 @@
 # %% auto #0
 __all__ = []
 
-# %% ../nbs/05c_trainers.control.ipynb #562fd058
+# %% ../nbs/05c_trainers.control.ipynb #7bc12212
 #| export
 
