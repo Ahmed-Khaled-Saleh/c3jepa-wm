@@ -6,7 +6,7 @@
 __all__ = ['LOG_FORMAT', 'DATE_FORMAT', 'gpu_timer', 'get_logger', 'CSVLogger', 'AverageMeter', 'jepa_rootpath',
            'git_information']
 
-# %% ../../nbs/08a_logger.base.ipynb #5692c197
+# %% ../../nbs/08a_logger.base.ipynb #d908c728
 import logging
 import os
 import subprocess
@@ -35,7 +35,7 @@ def gpu_timer(closure, log_timings=True):
     return result, elapsed_time
 
 
-# %% ../../nbs/08a_logger.base.ipynb #6da55461
+# %% ../../nbs/08a_logger.base.ipynb #78838496
 LOG_FORMAT = "[%(levelname)-8s][%(asctime)s][%(name)-20s][%(funcName)-25s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -46,7 +46,7 @@ def get_logger(name=None, force=False):
 
 
 
-# %% ../../nbs/08a_logger.base.ipynb #59ad343e
+# %% ../../nbs/08a_logger.base.ipynb #9d861640
 class CSVLogger(object):
 
     def __init__(self, fname, *argv, **kwargs):
@@ -71,7 +71,7 @@ class CSVLogger(object):
 
 
 
-# %% ../../nbs/08a_logger.base.ipynb #964dc999
+# %% ../../nbs/08a_logger.base.ipynb #1c9b4f09
 class AverageMeter(object):
     """computes and stores the average and current value"""
 

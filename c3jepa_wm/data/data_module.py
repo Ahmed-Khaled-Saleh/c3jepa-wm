@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #228f0e06
+# %% ../../nbs/01c_data.data_module.ipynb #eb708f16
 import os
 
 import numpy as np
@@ -19,11 +19,12 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #8580f3fd
+# %% ../../nbs/01c_data.data_module.ipynb #8ce48a41
 class DataModule:
     def __init__(self,
                  data_dir: str, 
-                 batch_size: int = 64, 
+                 train_batch_size: int = 64, 
+                 val_batch_size: int = 64,
                  shuffle: bool = True, 
                  num_workers: int = 0, 
                  pin_memory: bool = False,
@@ -31,8 +32,8 @@ class DataModule:
                  persistent_workers: bool = False):
         
         self.data_dir = data_dir
-        self.train_batch_size = batch_size
-        self.val_batch_size = batch_size
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
         self.shuffle = shuffle
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -88,9 +89,10 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #1689527e
+# %% ../../nbs/01c_data.data_module.ipynb #a41a3f61
 class VQDataModule(DataModule):
     def __init__(self, cfg):
+        self.cfg = cfg
         cfg.dataset.data_dir = self.get_data_path()
         data_params = OmegaConf.to_container(cfg.dataset, resolve=True)
         super().__init__(**data_params)
@@ -117,7 +119,7 @@ class VQDataModule(DataModule):
         )
 
         self.val_dataset  = MultiAgentPOVDataset(
-            h5_path= os.path.join(self.cfg.dataset.data_dir, "dataset.h5"), split= "test", transform= self.val_transforms
+            h5_path= os.path.join(self.cfg.dataset.data_dir, "dataset.h5"), split= "val", transform= self.val_transforms
         )
     
 
