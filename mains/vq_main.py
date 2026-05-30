@@ -3,11 +3,11 @@ import random
 from pathlib import Path
 import hydra
 import numpy as np
-from omegaconf import DictConfig, Omegaconf
+from omegaconf import DictConfig, OmegaConf
 import torch
 import wandb
 
-from c3jepa_wm.data.vae_datasets import VAEDataset
+from c3jepa_wm.data.data_module import VQDataModule
 from c3jepa_wm.models.msg_net import VQVAE
 from c3jepa_wm.trainers.msg_trainer import VQVAETrainer
 
@@ -23,7 +23,7 @@ def seed_everything(seed: int):
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     # Optional: print config block in terminal to confirm changes at runtime
-    print(Omegaconf.to_yaml(cfg))
+    print(OmegaConf.to_yaml(cfg))
 
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
@@ -40,7 +40,7 @@ def main(cfg: DictConfig):
         # dir=str(save_dir),
         name=cfg.model.name,
         project="vq-vae-gridworld",
-        config=Omegaconf.to_container(cfg, resolve=True),
+        config=OmegaConf.to_container(cfg, resolve=True),
     )
 
     ckp_dir = cfg.logging_params.ckp_dir
@@ -48,8 +48,8 @@ def main(cfg: DictConfig):
 
     # --- 4. Setup Data Components ---
     # Pass parameters straight from Hydra's dataset group dictionary
-    data_params = Omegaconf.to_container(cfg.dataset, resolve=True)
-    data_module = VAEDataset(**data_params, pin_memory=False)
+    # data_params = OmegaConf.to_container(cfg.dataset, resolve=True)
+    data_module = VQDataModule(cfg)
     data_module.setup()
 
     train_loader = data_module.train_dataloader()
@@ -57,7 +57,7 @@ def main(cfg: DictConfig):
 
     # --- 5. Build Model Architecture ---
     # Filter out 'name' so it matches your architecture's constructor signature
-    model_config = Omegaconf.to_container(cfg.model, resolve=True)
+    model_config = OmegaConf.to_container(cfg.model, resolve=True)
     model_params = {k: v for k, v in model_config.items() if k != "name"}
     model = VQVAE(**model_params)
 

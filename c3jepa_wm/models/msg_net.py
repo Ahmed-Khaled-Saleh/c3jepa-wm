@@ -5,18 +5,18 @@
 # %% auto #0
 __all__ = ['Tensor', 'BaseVAE', 'VectorQuantizer', 'ResidualLayer', 'VQVAE']
 
-# %% ../../nbs/02a_models.msg_net.ipynb #fbe90577
+# %% ../../nbs/02a_models.msg_net.ipynb #a03522f3
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #995fd926
+# %% ../../nbs/02a_models.msg_net.ipynb #b8508397
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/02a_models.msg_net.ipynb #9e9ae87f
+# %% ../../nbs/02a_models.msg_net.ipynb #c8f0357d
 from torch import nn
 from abc import abstractmethod
 
@@ -45,7 +45,7 @@ class BaseVAE(nn.Module):
     def loss_function(self, *inputs: Any, **kwargs) -> Tensor:
         pass
 
-# %% ../../nbs/02a_models.msg_net.ipynb #16429f6f
+# %% ../../nbs/02a_models.msg_net.ipynb #146542ca
 class VectorQuantizer(nn.Module):
     """
     Reference:

@@ -355,6 +355,6 @@ if __name__ == "__main__":
         base_seed=0,
     )
 
-    from merge_h5 import merge_npz_to_hdf5
+    from c3jepa_wm.data.utils import merge_npz_to_hdf5
     merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
     # merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
