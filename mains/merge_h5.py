@@ -15,28 +15,73 @@ def save_rollout_hdf5(rollout_idx, save_dict, data_dir):
                 compression="lz4",   # fast compression, good for uint8 images
             )
 
+import glob
+import os
+import h5py
+import numpy as np
 
-def merge_npz_to_hdf5(data_dir: str, out_path: str):
-    """One-time merge of all .npz rollouts into a single indexed .h5 file."""
-
+def merge_npz_to_hdf5(data_dir, out_path):
     files = sorted(glob.glob(os.path.join(data_dir, "rollout_*.npz")))
-    with h5py.File(out_path, 'w') as h5:
-        for fpath in files:
-            name = os.path.splitext(os.path.basename(fpath))[0]
-            data = np.load(fpath, allow_pickle=True)
-            grp  = h5.create_group(name)
-            for k in data.files:
-                arr = data[k]
-                
-                if arr.ndim == 0:
-                    # Save scalar metadata as an HDF5 attribute on the group instead of a dataset
-                    grp.attrs[k] = arr.item()  # .item() converts numpy scalar to native Python type
-                else:
-                    # Save actual trajectory arrays as compressed datasets
-                    # grp.create_dataset(k, data=arr, compression="lz4")
-                    grp.create_dataset(k, data=arr, compression="gzip", compression_opts=4)
 
-    print(f"Merged {len(files)} rollouts → {out_path}")
+    merged = 0
+    skipped = 0
+
+    with h5py.File(out_path, "w") as h5:
+        for fpath in files:
+
+            try:
+                with np.load(fpath, allow_pickle=True) as data:
+
+                    # Force validation of every member
+                    for k in data.files:
+                        _ = data[k]
+
+                    name = os.path.splitext(os.path.basename(fpath))[0]
+                    grp = h5.create_group(name)
+
+                    for k in data.files:
+                        arr = data[k]
+
+                        if arr.ndim == 0:
+                            grp.attrs[k] = arr.item()
+                        else:
+                            grp.create_dataset(
+                                k,
+                                data=arr,
+                                compression="gzip",
+                                compression_opts=4,
+                            )
+
+                merged += 1
+
+            except Exception as e:
+                skipped += 1
+                print(f"Skipping {fpath}: {e}")
+
+    print(f"Merged  {merged} rollouts")
+    print(f"Skipped {skipped} corrupted rollouts")
+    
+# def merge_npz_to_hdf5(data_dir: str, out_path: str):
+#     """One-time merge of all .npz rollouts into a single indexed .h5 file."""
+
+#     files = sorted(glob.glob(os.path.join(data_dir, "rollout_*.npz")))
+#     with h5py.File(out_path, 'w') as h5:
+#         for fpath in files:
+#             name = os.path.splitext(os.path.basename(fpath))[0]
+#             data = np.load(fpath, allow_pickle=True)
+#             grp  = h5.create_group(name)
+#             for k in data.files:
+#                 arr = data[k]
+                
+#                 if arr.ndim == 0:
+#                     # Save scalar metadata as an HDF5 attribute on the group instead of a dataset
+#                     grp.attrs[k] = arr.item()  # .item() converts numpy scalar to native Python type
+#                 else:
+#                     # Save actual trajectory arrays as compressed datasets
+#                     # grp.create_dataset(k, data=arr, compression="lz4")
+#                     grp.create_dataset(k, data=arr, compression="gzip", compression_opts=4)
+
+#     print(f"Merged {len(files)} rollouts → {out_path}")
 
 # if __name__ == "__main__":
 #     merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
