@@ -20,7 +20,7 @@ def seed_everything(seed: int):
 
 
 # 1. Point hydra to your configuration folder and master file
-@hydra.main(version_base=None, config_path="configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     # Optional: print config block in terminal to confirm changes at runtime
     print(OmegaConf.to_yaml(cfg))
