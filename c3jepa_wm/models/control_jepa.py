@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = []
 
-# %% ../../nbs/02c_models.lewm.ipynb #1843b6b8
+# %% ../../nbs/02c_models.lewm.ipynb #28fcdb3b
 import torch
 from torch import nn
 from torch.nn import functional as F
