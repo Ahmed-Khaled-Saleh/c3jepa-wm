@@ -34,8 +34,8 @@ def main(cfg: DictConfig):
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
     # Hydra creates an isolated working directory for every run automatically.
     # We resolve the save directory path to make sure logs land safely.
-    # cfg.logging_params.save_dir = "."
-    # cfg.logging_params.ckp_dir = "."
+    cfg.logging_params.save_dir = "."
+    cfg.logging_params.ckp_dir = "."
 
     save_dir = Path(hydra.utils.to_absolute_path(cfg.logging_params.save_dir))
     save_dir.mkdir(exist_ok=True, parents=True)
