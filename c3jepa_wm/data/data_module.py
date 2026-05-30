@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #68dcbf97
+# %% ../../nbs/01c_data.data_module.ipynb #a80c3090
 import os
 
 import numpy as np
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #71a6357f
+# %% ../../nbs/01c_data.data_module.ipynb #c891ad50
 class DataModule:
     def __init__(self,
                  data_dir: str, 
@@ -89,7 +89,7 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #6cd6d39c
+# %% ../../nbs/01c_data.data_module.ipynb #ce7c56f6
 class VQDataModule(DataModule):
     def __init__(self, cfg):
         self.cfg = cfg
@@ -99,7 +99,7 @@ class VQDataModule(DataModule):
         
     def get_data_path(self):
         paths = {
-            "kaggle": "/kaggle/input/marlgridv3/MarlGridV3/",
+            "kaggle": "/kaggle/input/datasets/ahmedkhaledsal/findgoal/",
             "puhti": "/scratch/project_2009050/datasets/findgoal",
             "mahti": "/scratch/project_2009050/datasets/findgoal/",
             "local": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/mains/data",
