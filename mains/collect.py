@@ -290,19 +290,19 @@ def collect_one_rollout(args):
         save_dict[f"{ag}_rew"]   = np.asarray(agent_data[ag]["rew"])
         save_dict[f"{ag}_csi"]   = np.stack(agent_data[ag]["csi"])
 
-    # np.savez_compressed(save_path, **save_dict)
-    tmp_path = save_path + ".tmp"
+    np.savez_compressed(save_path, **save_dict)
+    # tmp_path = save_path + ".tmp"
 
-    with open(tmp_path, "wb") as f:
-        np.savez_compressed(f, **save_dict)
+    # with open(tmp_path, "wb") as f:
+    #     np.savez_compressed(f, **save_dict)
 
-    with np.load(tmp_path) as x:
-        for k in x.files:
-            _ = x[k]
+    # with np.load(tmp_path) as x:
+    #     for k in x.files:
+    #         _ = x[k]
 
-    assert os.path.getsize(tmp_path) > 0
-    os.replace(tmp_path, save_path)
-    
+    # assert os.path.getsize(tmp_path) > 0
+    # os.replace(tmp_path, save_path)
+
     print(f"> [{policy:14s}] Rollout {rollout_idx:04d} | "
           f"len={episode_len:3d} | success={success} | saved to {save_path}")
 
