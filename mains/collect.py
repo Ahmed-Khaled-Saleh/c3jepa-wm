@@ -293,13 +293,16 @@ def collect_one_rollout(args):
     # np.savez_compressed(save_path, **save_dict)
     tmp_path = save_path + ".tmp"
 
-    np.savez_compressed(tmp_path, **save_dict)
+    with open(tmp_path, "wb") as f:
+        np.savez_compressed(f, **save_dict)
 
     with np.load(tmp_path) as x:
         for k in x.files:
             _ = x[k]
 
+    assert os.path.getsize(tmp_path) > 0
     os.replace(tmp_path, save_path)
+    
     print(f"> [{policy:14s}] Rollout {rollout_idx:04d} | "
           f"len={episode_len:3d} | success={success} | saved to {save_path}")
 
