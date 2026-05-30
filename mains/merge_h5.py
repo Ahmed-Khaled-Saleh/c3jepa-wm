@@ -60,7 +60,7 @@ def merge_npz_to_hdf5(data_dir, out_path):
 
     print(f"Merged  {merged} rollouts")
     print(f"Skipped {skipped} corrupted rollouts")
-    
+
 # def merge_npz_to_hdf5(data_dir: str, out_path: str):
 #     """One-time merge of all .npz rollouts into a single indexed .h5 file."""
 
@@ -83,5 +83,6 @@ def merge_npz_to_hdf5(data_dir, out_path):
 
 #     print(f"Merged {len(files)} rollouts → {out_path}")
 
-# if __name__ == "__main__":
-#     merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
+if __name__ == "__main__":
+    # merge_npz_to_hdf5(data_dir="./data/rollouts", out_path="./data/dataset.h5")
+    merge_npz_to_hdf5(data_dir="/scratch/project_2009050/datasets/findgoal/rollouts", out_path="/scratch/project_2009050/datasets/findgoal/dataset.h5")
