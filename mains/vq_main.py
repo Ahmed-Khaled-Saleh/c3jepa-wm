@@ -6,6 +6,7 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import torch
 import wandb
+from dotenv import load_dotenv
 
 from c3jepa_wm.data.data_module import VQDataModule
 from c3jepa_wm.models.msg_net import VQVAE
@@ -24,10 +25,10 @@ def seed_everything(seed: int):
 def main(cfg: DictConfig):
     # Optional: print config block in terminal to confirm changes at runtime
     print(OmegaConf.to_yaml(cfg))
-
+    load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda")# if torch.cuda.is_available() else "cpu")
     print(f"Using runtime hardware device: {device}")
 
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
