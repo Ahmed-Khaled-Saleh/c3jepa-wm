@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --account=project_2009050
 #SBATCH --job-name=data_collection
-#SBATCH --partition=small
+#SBATCH --partition=medium
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=40
-#SBATCH --time=2:00:00
+#SBATCH --ntasks-per-node=128
+#SBATCH --time=8:00:00
 #SBATCH --output=./logs/out_%j_%x_%N.log  # includes time stamp (t), job ID(j), job name (x), and node name (N)
 #SBATCH --error=./logs/err_%j_%x_%N.err
 
