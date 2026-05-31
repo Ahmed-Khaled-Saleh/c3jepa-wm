@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['VQVAETrainer']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #af5ecb18
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #6defe64d
 import torch
 import torch.nn as nn
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #26234e30
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #a437fd3a
 import os
 import torch
 import torchvision.utils as vutils
@@ -25,13 +25,17 @@ class VQVAETrainer:
         self.save_dir = save_dir
 
         # Match the optimizer configuration from your original script
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=3e-4)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
+            )
 
         # Create output directories for visual inspection
         os.makedirs(os.path.join(self.save_dir, "Reconstructions"), exist_ok=True)
 
     def train_epoch(self, dataloader, epoch):
         self.model.train()
+        # self.model.vq_layer.training= True
         total_loss = 0.0
 
         for batch_idx, batch in enumerate(dataloader):
@@ -41,19 +45,21 @@ class VQVAETrainer:
             self.optimizer.zero_grad()
 
             # Forward pass
-            recons, input_img, vq_loss = self.model(real_img)
+            recons, input_img, vq_loss, perplexity = self.model(real_img)
 
             # Call your model's built-in VQ-VAE loss evaluation function
             loss_dict = self.model.loss_function(
                 recons,
                 input_img,
                 vq_loss,
+                perplexity,
                 M_N=self.params.get("kld_weight", 1.0),
                 batch_idx=batch_idx,
             )
 
             loss = loss_dict["loss"]
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -67,6 +73,7 @@ class VQVAETrainer:
 
     @torch.no_grad()
     def validate_epoch(self, dataloader, epoch):
+        # self.model.vq_layer.training= False
         self.model.eval()
         total_loss = 0.0
 
