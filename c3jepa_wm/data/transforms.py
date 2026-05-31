@@ -5,12 +5,12 @@
 # %% auto #0
 __all__ = ['get_transforms']
 
-# %% ../../nbs/01b_data.transforms.ipynb #302f1c93
+# %% ../../nbs/01b_data.transforms.ipynb #9f2109a3
 import torch
 import torchvision.transforms.v2 as v2
 import torch.nn.functional as F
 
-# %% ../../nbs/01b_data.transforms.ipynb #578014b3
+# %% ../../nbs/01b_data.transforms.ipynb #a034b897
 def get_transforms(env= "findgoal", model= "VQVAE"):
 
     if model == "VQVAE" and env == "findgoal":
