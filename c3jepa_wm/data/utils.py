@@ -7,11 +7,11 @@ __all__ = ['H_full_url', 'valid_2d_url', 'csi_data_url', 'gdown_download_file', 
            'np_get_csi', 'np_get_all_from', 'np_get_neighbors_csi', 'build_csi_index', 'df_get_csi', 'df_get_all_from',
            'df_get_neighbors_csi', 'save_rollout_hdf5', 'merge_npz_to_hdf5', 'show_batch']
 
-# %% ../../nbs/01d_data.utils.ipynb #049bb123
+# %% ../../nbs/01d_data.utils.ipynb #d4ea21c9
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/01d_data.utils.ipynb #05ac8e13
+# %% ../../nbs/01d_data.utils.ipynb #e397b491
 import os
 
 import numpy as np
@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms.v2 as v2
 import torch.nn.functional as F
 
-# %% ../../nbs/01d_data.utils.ipynb #c10b04d3
+# %% ../../nbs/01d_data.utils.ipynb #ccb831cd
 def gdown_download_file(url: str, output: str= ".") -> None:
     """Downloads a file from the given URL and saves it to the specified output path.
     Args:
@@ -32,13 +32,13 @@ def gdown_download_file(url: str, output: str= ".") -> None:
     """
     gdown.download(url, output)
 
-# %% ../../nbs/01d_data.utils.ipynb #582cf27d
+# %% ../../nbs/01d_data.utils.ipynb #518de6ed
 H_full_url = "https://drive.google.com/file/d/126gvv5GBgzgG21y19fza5vHBtFGxRWMq/view?usp=sharing"
 valid_2d_url = "https://drive.google.com/file/d/1Dzj9joHNG434-ZQy3lIEBlscFvw_jH0w/view?usp=sharing"
 csi_data_url = "https://drive.google.com/file/d/1bAQEiAvFU-oNeb_UuFO8nOD0NKaL08le/view?usp=sharing"
 
 
-# %% ../../nbs/01d_data.utils.ipynb #39bfc473
+# %% ../../nbs/01d_data.utils.ipynb #5255716d
 def get_h_full(H_full_url: str = H_full_url) -> np.ndarray:
     gdown_download_file(H_full_url, "H_full.npy")
     return np.load("H_full.npy")
@@ -52,7 +52,7 @@ def get_csi_data(csi_data_url: str = csi_data_url) -> pd.DataFrame:
     return pd.read_csv("csi_data.csv")
 
 
-# %% ../../nbs/01d_data.utils.ipynb #b2ba0feb
+# %% ../../nbs/01d_data.utils.ipynb #607a8a53
 def np_get_csi(H_full: np.ndarray, grid_to_idx: dict, tx_grid: tuple, rx_grid: tuple) -> np.ndarray:
     """
     Get CFR for a D2D link between two grid positions.
@@ -86,7 +86,7 @@ def np_get_neighbors_csi(H_full: np.ndarray, grid_to_idx: dict, tx_grid: tuple, 
 
 
 
-# %% ../../nbs/01d_data.utils.ipynb #a4f08607
+# %% ../../nbs/01d_data.utils.ipynb #fa9bf446
 # Assuming df has columns: tx_grid, rx_grid, csi
 # and tuples are stored as (gx, gy)
 
@@ -127,7 +127,7 @@ def df_get_neighbors_csi(csi_data: pd.DataFrame, tx_grid: tuple, radius: int = 1
     )
     return csi_data[mask]
 
-# %% ../../nbs/01d_data.utils.ipynb #18944102
+# %% ../../nbs/01d_data.utils.ipynb #9a3541e9
 import os
 import glob
 
@@ -135,7 +135,7 @@ import numpy as np
 import h5py
 
 
-# %% ../../nbs/01d_data.utils.ipynb #a01e7009
+# %% ../../nbs/01d_data.utils.ipynb #3c35b137
 def save_rollout_hdf5(rollout_idx, save_dict, data_dir):
     """Save one rollout as a group inside a shared HDF5 file."""
     os.makedirs(data_dir, exist_ok=True)
@@ -192,7 +192,7 @@ def merge_npz_to_hdf5(data_dir, out_path):
     print(f"Skipped {skipped} corrupted rollouts")
     
 
-# %% ../../nbs/01d_data.utils.ipynb #f3853c17
+# %% ../../nbs/01d_data.utils.ipynb #fe65d027
 import matplotlib.pyplot as plt
 import numpy as np
 import torchvision
