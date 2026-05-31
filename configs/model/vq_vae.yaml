@@ -10,7 +10,7 @@ name: "VQVAE"
 in_channels: 3
 embedding_dim: 64
 num_embeddings: 512
-hidden_dims: [128, 256]
+hidden_dims: [256, 512]
 beta: 1.0 #0.25
-img_size: 64
+img_size: 128
 
