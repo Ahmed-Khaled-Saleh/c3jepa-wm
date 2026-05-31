@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['VQVAETrainer']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #ae881d4a
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #7ecdbd6c
 import torch
 import torch.nn as nn
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #2462a06b
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #bde3846f
 import os
 import torch
 import torchvision.utils as vutils
@@ -80,9 +80,9 @@ class VQVAETrainer:
         for batch_idx, batch in enumerate(dataloader):
             real_img = batch.to(self.device)
 
-            recons, input_img, vq_loss = self.model(real_img)
+            recons, input_img, vq_loss, perplexity = self.model(real_img)
             loss_dict = self.model.loss_function(
-                recons, input_img, vq_loss, M_N=1.0, batch_idx=batch_idx
+                recons, input_img, vq_loss, perplexity, M_N=1.0, batch_idx=batch_idx
             )
 
             total_loss += loss_dict["loss"].item()
