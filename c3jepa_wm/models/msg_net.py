@@ -5,18 +5,18 @@
 # %% auto #0
 __all__ = ['Tensor', 'BaseVAE', 'VectorQuantizer', 'ResidualLayer', 'VQVAE']
 
-# %% ../../nbs/02a_models.msg_net.ipynb #a841f6e0
+# %% ../../nbs/02a_models.msg_net.ipynb #0827ba52
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #c75eda23
+# %% ../../nbs/02a_models.msg_net.ipynb #ea8aee0b
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/02a_models.msg_net.ipynb #8c6eb14c
+# %% ../../nbs/02a_models.msg_net.ipynb #46aca707
 from torch import nn
 from abc import abstractmethod
 
@@ -45,7 +45,7 @@ class BaseVAE(nn.Module):
     def loss_function(self, *inputs: Any, **kwargs) -> Tensor:
         pass
 
-# %% ../../nbs/02a_models.msg_net.ipynb #b0ee4f72
+# %% ../../nbs/02a_models.msg_net.ipynb #673cbb6f
 class VectorQuantizer(nn.Module):
     """
     Reference:
@@ -97,7 +97,7 @@ class VectorQuantizer(nn.Module):
         return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss  # [B x D x H x W]
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #8702786e
+# %% ../../nbs/02a_models.msg_net.ipynb #3d76e86e
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, beta=0.25, decay=0.99, eps=1e-5):
         super().__init__()
@@ -125,7 +125,7 @@ class VectorQuantizer(nn.Module):
         encoding_one_hot = torch.zeros(encoding_inds.size(0), self.K, device=latents.device)
         encoding_one_hot.scatter_(1, encoding_inds, 1)
 
-        avg_probs = encoding_one_hot.mean(0)  # [K] — average usage of each code
+        avg_probs = encoding_one_hot.mean(0).detach()  # [K] — average usage of each code
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
 
         quantized_latents = torch.matmul(encoding_one_hot, self.embedding)
@@ -134,15 +134,16 @@ class VectorQuantizer(nn.Module):
         if self.training:
             # EMA update — happens outside the gradient graph
             self.cluster_size.mul_(self.decay).add_(
-                encoding_one_hot.sum(0), alpha=1 - self.decay
+                encoding_one_hot.sum(0).detach(), alpha=1 - self.decay
             )
-            dw = torch.matmul(encoding_one_hot.t(), flat_latents)
+            dw = torch.matmul(encoding_one_hot.t(), flat_latents.detach())
             self.ema_embed.mul_(self.decay).add_(dw, alpha=1 - self.decay)
 
             # Laplace smoothing to avoid dead codes
             n = self.cluster_size.sum()
             smoothed = (self.cluster_size + self.eps) / (n + self.K * self.eps) * n
-            self.embedding = self.ema_embed / smoothed.unsqueeze(1)
+            # self.embedding = self.ema_embed / smoothed.unsqueeze(1)
+            self.embedding.copy_(self.ema_embed / smoothed.unsqueeze(1))
 
         # Only commitment loss — no embedding_loss needed
         vq_loss = self.beta * F.mse_loss(quantized_latents.detach(), latents)
@@ -151,7 +152,7 @@ class VectorQuantizer(nn.Module):
         return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss, perplexity
     
 
-# %% ../../nbs/02a_models.msg_net.ipynb #ce75ff87
+# %% ../../nbs/02a_models.msg_net.ipynb #fefc62a2
 # class VectorQuantizer(nn.Module):
 #     """
 #     Reference:
