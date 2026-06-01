@@ -23,7 +23,7 @@ def seed_everything(seed: int):
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     # Optional: print config block in terminal to confirm changes at runtime
-    print(OmegaConf.to_yaml(cfg))
+    print(OmegaConf.to_yaml(cfg, resolve=True))
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
@@ -57,18 +57,18 @@ def main(cfg: DictConfig):
     # --- 7. Execution Loop ---
     # print(f"======= Training {cfg.model.name} =======")
 
-    # for epoch in range(1, cfg.exp_params.max_epochs + 1):
-    #     train_loss = trainer.train_epoch(epoch)
-    #     val_loss = trainer.validate_epoch(epoch)
-    #     trainer.scheduler.step(val_loss)
+    for epoch in range(1, cfg.pipeline.max_epochs + 1):
+        train_loss = trainer.train_epoch(epoch)
+        val_loss = trainer.validate_epoch(epoch)
+        trainer.scheduler.step(val_loss)
 
-    #     checkpoint_state = {
-    #         "epoch": epoch,
-    #         "model_state_dict": model.state_dict(),
-    #         "optimizer_state_dict": trainer.optimizer.state_dict(),
-    #         "val_loss": val_loss,
-    #     }
-    #     trainer.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
+        checkpoint_state = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": trainer.optimizer.state_dict(),
+            "val_loss": val_loss,
+        }
+        trainer.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
 
     wandb.finish()
 

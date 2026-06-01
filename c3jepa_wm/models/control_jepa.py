@@ -6,13 +6,13 @@
 __all__ = ['modulate', 'SIGReg', 'FeedForward', 'Attention', 'ConditionalBlock', 'Block', 'Transformer', 'Embedder', 'MLP',
            'ARPredictor']
 
-# %% ../../nbs/02c_models.lewm.ipynb #f635a767
+# %% ../../nbs/02c_models.lewm.ipynb #b16c29d2
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02c_models.lewm.ipynb #41769a0f
+# %% ../../nbs/02c_models.lewm.ipynb #66e45c58
 import torch
 from torch import nn
 import torch.nn.functional as F
