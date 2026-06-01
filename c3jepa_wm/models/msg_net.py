@@ -5,18 +5,18 @@
 # %% auto #0
 __all__ = ['Tensor', 'BaseVAE', 'VectorQuantizer', 'ResidualLayer', 'VQVAE']
 
-# %% ../../nbs/02a_models.msg_net.ipynb #3ae8d392
+# %% ../../nbs/02a_models.msg_net.ipynb #0d8df301
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #95a89e26
+# %% ../../nbs/02a_models.msg_net.ipynb #eb250186
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/02a_models.msg_net.ipynb #8f8b60b5
+# %% ../../nbs/02a_models.msg_net.ipynb #eab0a08b
 from torch import nn
 from abc import abstractmethod
 
@@ -45,7 +45,7 @@ class BaseVAE(nn.Module):
     def loss_function(self, *inputs: Any, **kwargs) -> Tensor:
         pass
 
-# %% ../../nbs/02a_models.msg_net.ipynb #7c340de2
+# %% ../../nbs/02a_models.msg_net.ipynb #046780bf
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, beta=0.25, decay=0.99, eps=1e-5):
         super().__init__()
@@ -100,7 +100,7 @@ class VectorQuantizer(nn.Module):
         return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss, perplexity
     
 
-# %% ../../nbs/02a_models.msg_net.ipynb #c22c469a
+# %% ../../nbs/02a_models.msg_net.ipynb #c7c735c2
 # class VectorQuantizer(nn.Module):
 #     """
 #     Reference:
@@ -186,79 +186,94 @@ class VQVAE(BaseVAE):
 
         modules = []
         if hidden_dims is None:
-            hidden_dims = [128, 256]
+            hidden_dims = [128, 256, 512]
 
-        # Build Encoder
+        # Downsampling blocks: 224 → 112 → 56 → 28
         for h_dim in hidden_dims:
             modules.append(
                 nn.Sequential(
                     nn.Conv2d(in_channels, out_channels=h_dim,
-                              kernel_size=4, stride=2, padding=1),
+                            kernel_size=4, stride=2, padding=1),
                     nn.LeakyReLU())
             )
             in_channels = h_dim
 
+        # 3x3 conv at 28x28
         modules.append(
             nn.Sequential(
                 nn.Conv2d(in_channels, in_channels,
-                          kernel_size=3, stride=1, padding=1),
+                        kernel_size=3, stride=1, padding=1),
                 nn.LeakyReLU())
         )
 
+        # Residual layers at 28x28
         for _ in range(3):
             modules.append(ResidualLayer(in_channels, in_channels))
         modules.append(nn.LeakyReLU())
 
+        # Stride-4 conv: 28 → 7
+        modules.append(
+            nn.Sequential(
+                nn.Conv2d(in_channels, in_channels,
+                        kernel_size=4, stride=4, padding=0),
+                nn.LeakyReLU())
+        )
+
+        # Project to embedding_dim: 7x7
         modules.append(
             nn.Sequential(
                 nn.Conv2d(in_channels, embedding_dim,
-                          kernel_size=1, stride=1),
+                        kernel_size=1, stride=1),
                 nn.LeakyReLU())
         )
 
         self.encoder = nn.Sequential(*modules)
-
+        
         self.vq_layer = VectorQuantizer(num_embeddings,
                                         embedding_dim,
                                         self.beta)
 
         # Build Decoder
         modules = []
+
+        # Project from embedding_dim back to hidden_dims[-1]
         modules.append(
             nn.Sequential(
-                nn.Conv2d(embedding_dim,
-                          hidden_dims[-1],
-                          kernel_size=3,
-                          stride=1,
-                          padding=1),
+                nn.Conv2d(embedding_dim, hidden_dims[-1],
+                        kernel_size=3, stride=1, padding=1),
                 nn.LeakyReLU())
         )
 
+        # Residual layers at 7x7
         for _ in range(3):
             modules.append(ResidualLayer(hidden_dims[-1], hidden_dims[-1]))
-
         modules.append(nn.LeakyReLU())
 
-        hidden_dims = hidden_dims[::-1]#hidden_dims.reverse()
+        # Stride-4 upsample: 7 → 28
+        modules.append(
+            nn.Sequential(
+                nn.ConvTranspose2d(hidden_dims[-1], hidden_dims[-1],
+                                kernel_size=4, stride=4, padding=0),
+                nn.LeakyReLU())
+        )
 
+        # Upsampling blocks: 28 → 56 → 112 → 224
+        hidden_dims.reverse()
         for i in range(len(hidden_dims) - 1):
             modules.append(
                 nn.Sequential(
-                    nn.ConvTranspose2d(hidden_dims[i],
-                                       hidden_dims[i + 1],
-                                       kernel_size=4,
-                                       stride=2,
-                                       padding=1),
+                    nn.ConvTranspose2d(hidden_dims[i], hidden_dims[i + 1],
+                                    kernel_size=4, stride=2, padding=1),
                     nn.LeakyReLU())
             )
 
+        # Final upsample to 3 channels
         modules.append(
             nn.Sequential(
-                nn.ConvTranspose2d(hidden_dims[-1],
-                                   out_channels=3,
-                                   kernel_size=4,
-                                   stride=2, padding=1),
-                nn.Tanh()))
+                nn.ConvTranspose2d(hidden_dims[-1], out_channels=3,
+                                kernel_size=4, stride=2, padding=1),
+                nn.Tanh())
+        )
 
         self.decoder = nn.Sequential(*modules)
 
