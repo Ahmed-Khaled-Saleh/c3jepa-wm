@@ -1,0 +1,19 @@
+# configs/pipeline/vqvae_pretrain.yaml
+defaults:
+  - /datamodule: vqvae_data
+  - /model: vqvae
+  - _self_
+
+stage: 1
+
+# Define Stage 1 specific hyperparameters here
+lr: 3e-4
+max_epochs: 50
+
+trainer:
+  _target_: c3jepa_wm.trainers.msg_trainer.VQVAETrainer
+  epochs: ${pipeline.max_epochs} # Automatically grabs 50
+  lr: ${pipeline.lr}             # Automatically grabs 3e-4
+  project_name: ${logging_params.project_name} # Grabs from config.yaml
+  ckp_dir: ${logging_params.ckp_dir}             # Grabs from config.yaml
+  save_dir: ${logging_params.save_dir}           # Grabs from config.yaml

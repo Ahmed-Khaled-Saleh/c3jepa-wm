@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #5c4ac7d2
+# %% ../../nbs/01c_data.data_module.ipynb #f6af3602
 import os
 
 import numpy as np
@@ -19,12 +19,11 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #cc1c93d2
+# %% ../../nbs/01c_data.data_module.ipynb #14a2c9ef
 class DataModule:
     def __init__(self,
                  data_dir: str, 
-                 train_batch_size: int = 64, 
-                 val_batch_size: int = 64,
+                 batch_size: int = 64, 
                  shuffle: bool = True, 
                  num_workers: int = 0, 
                  pin_memory: bool = False,
@@ -32,8 +31,7 @@ class DataModule:
                  persistent_workers: bool = False):
         
         self.data_dir = data_dir
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
+        self.batch_size = batch_size
         self.shuffle = shuffle
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -49,7 +47,7 @@ class DataModule:
         """Return the training dataloader."""
         return DataLoader(
             self.train_dataset, 
-            batch_size=self.train_batch_size, 
+            batch_size=self.batch_size, 
             shuffle=self.shuffle, 
             num_workers=self.num_workers, 
             pin_memory=self.pin_memory,
@@ -63,7 +61,7 @@ class DataModule:
         """Return the validation dataloader."""
         return DataLoader(
             self.val_dataset, 
-            batch_size=self.val_batch_size, 
+            batch_size=self.batch_size, 
             shuffle=False, 
             num_workers=self.num_workers, 
             pin_memory=self.pin_memory,
@@ -89,13 +87,16 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #ad63ab23
+# %% ../../nbs/01c_data.data_module.ipynb #f07f668c
 class VQDataModule(DataModule):
-    def __init__(self, cfg):
-        self.cfg = cfg
-        cfg.dataset.data_dir = self.get_data_path()
-        data_params = OmegaConf.to_container(cfg.dataset, resolve=True)
-        super().__init__(**data_params)
+    def __init__(self,
+                 batch_size: int = 64, 
+                 img_size: int = 224,
+                 **kwargs):
+        
+        data_dir = self.get_data_path()
+        self.img_size = img_size
+        super().__init__(data_dir= data_dir, batch_size= batch_size, **kwargs)
         
     def get_data_path(self):
         paths = {
@@ -112,14 +113,14 @@ class VQDataModule(DataModule):
         raise FileNotFoundError("No valid data path found for this hostname.")
 
     def setup(self):
-        self.train_transforms, self.val_transforms = get_transforms()
+        self.train_transforms, self.val_transforms = get_transforms(img_size= self.img_size)
         
         self.train_dataset  = MultiAgentPOVDataset(
-            h5_path= os.path.join(self.cfg.dataset.data_dir, "dataset.h5"), split= "train", transform= self.train_transforms
+            h5_path= os.path.join(self.data_dir, "dataset.h5"), split= "train", transform= self.train_transforms
         )
 
         self.val_dataset  = MultiAgentPOVDataset(
-            h5_path= os.path.join(self.cfg.dataset.data_dir, "dataset.h5"), split= "val", transform= self.val_transforms
+            h5_path= os.path.join(self.data_dir, "dataset.h5"), split= "val", transform= self.val_transforms
         )
     
 

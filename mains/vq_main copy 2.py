@@ -95,7 +95,7 @@ def main(cfg: DictConfig):
             "val_loss": val_loss,
         }
         # torch.save(checkpoint_state, f"{ckp_dir}/last.pt")
-        trainer.ck_pointer.save_checkpoint(state= checkpoint_state, curr_acc= -val_loss, step= epoch)
+        trainer.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
 
         # if val_loss < best_val_loss:
         #     best_val_loss = val_loss

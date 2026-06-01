@@ -1,0 +1,22 @@
+# configs/pipeline/wm_train.yaml
+defaults:
+  - /datamodule: jepa_data
+  - /model@model.vqvae: vqvae
+  - /model@model.power_net: power_net
+  - /model@model.jepa: control_jepa
+  - _self_
+
+stage: 2
+
+# Define Stage 2 specific hyperparameters here
+lr: 1e-4
+max_epochs: 100
+
+model:
+  vqvae:
+    checkpoint_path: "${logging_params.ckp_dir}/vqvae_best.ckpt" # Interpolates the global ckp_dir!
+
+trainer:
+  _target_: c3jepa_wm.trainers.msg_trainer.WMTrainer
+  epochs: ${pipeline.max_epochs} # Automatically grabs 100
+  lr: ${pipeline.lr}             # Automatically grabs 1e-4
