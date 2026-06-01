@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['VQVAETrainer']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #232c05ac
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #1507ea23
 import torch
 import torch.nn as nn
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #657cfc58
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #c84731d0
 import os
 import torch
 import torchvision.utils as vutils

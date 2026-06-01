@@ -5,12 +5,12 @@
 # %% auto #0
 __all__ = ['get_transforms']
 
-# %% ../../nbs/01b_data.transforms.ipynb #9f2109a3
+# %% ../../nbs/01b_data.transforms.ipynb #317cef90
 import torch
 import torchvision.transforms.v2 as v2
 import torch.nn.functional as F
 
-# %% ../../nbs/01b_data.transforms.ipynb #a034b897
+# %% ../../nbs/01b_data.transforms.ipynb #26437b7a
 def get_transforms(env= "findgoal", model= "VQVAE"):
 
     if model == "VQVAE" and env == "findgoal":
@@ -18,11 +18,11 @@ def get_transforms(env= "findgoal", model= "VQVAE"):
             [
                 v2.ToImage(),
                 v2.ToDtype(torch.float32, scale=True),
-                v2.Lambda(
-                    lambda x: F.interpolate(
-                        x.unsqueeze(0), size=(128, 128), mode="area"
-                    ).squeeze(0)
-                ),
+                # v2.Lambda(
+                #     lambda x: F.interpolate(
+                #         x.unsqueeze(0), size=(128, 128), mode="area"
+                #     ).squeeze(0)
+                # ),
                 v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
             ]
         )
@@ -31,11 +31,11 @@ def get_transforms(env= "findgoal", model= "VQVAE"):
             [
                 v2.ToImage(),
                 v2.ToDtype(torch.float32, scale=True),
-                v2.Lambda(
-                    lambda x: F.interpolate(
-                        x.unsqueeze(0), size=(128, 128), mode="area"
-                    ).squeeze(0)
-                ),
+                # v2.Lambda(
+                #     lambda x: F.interpolate(
+                #         x.unsqueeze(0), size=(128, 128), mode="area"
+                #     ).squeeze(0)
+                # ),
                 v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
             ]
         )
