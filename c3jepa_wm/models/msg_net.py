@@ -5,18 +5,18 @@
 # %% auto #0
 __all__ = ['Tensor', 'BaseVAE', 'VectorQuantizer', 'ResidualLayer', 'VQVAE']
 
-# %% ../../nbs/02a_models.msg_net.ipynb #963423ca
+# %% ../../nbs/02a_models.msg_net.ipynb #360d2c42
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #44e6f4dc
+# %% ../../nbs/02a_models.msg_net.ipynb #9052b898
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/02a_models.msg_net.ipynb #7393e421
+# %% ../../nbs/02a_models.msg_net.ipynb #9d7d3a68
 from torch import nn
 from abc import abstractmethod
 
@@ -45,7 +45,7 @@ class BaseVAE(nn.Module):
     def loss_function(self, *inputs: Any, **kwargs) -> Tensor:
         pass
 
-# %% ../../nbs/02a_models.msg_net.ipynb #ce148a75
+# %% ../../nbs/02a_models.msg_net.ipynb #11d2574b
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, beta=0.25, decay=0.99, eps=1e-5):
         super().__init__()
@@ -100,7 +100,7 @@ class VectorQuantizer(nn.Module):
         return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss, perplexity
     
 
-# %% ../../nbs/02a_models.msg_net.ipynb #5c6870c2
+# %% ../../nbs/02a_models.msg_net.ipynb #8dff8dfc
 # class VectorQuantizer(nn.Module):
 #     """
 #     Reference:
@@ -258,7 +258,7 @@ class VQVAE(BaseVAE):
         )
 
         # Upsampling blocks: 28 → 56 → 112 → 224
-        hidden_dims.reverse()
+        hidden_dims = hidden_dims[::-1]#hidden_dims.reverse()
         for i in range(len(hidden_dims) - 1):
             modules.append(
                 nn.Sequential(
@@ -343,3 +343,19 @@ class VQVAE(BaseVAE):
 
         return self.forward(x)[0]
     
+
+    def get_message_indices(self, obs):
+        """Returns 49 discrete token indices per observation (one per grid cell)"""
+        encoding = self.encode(obs)[0]  # [B, D, 7, 7]
+        
+        # No pooling needed — encoder already outputs 7x7
+        latents = encoding.permute(0, 2, 3, 1).contiguous()  # [B, 7, 7, D]
+        latents = latents.view(-1, self.embedding_dim)         # [B*49, D]
+        
+        dist = (torch.sum(latents ** 2, dim=1, keepdim=True)
+                + torch.sum(self.vq_layer.embedding ** 2, dim=1)
+                - 2 * torch.matmul(latents, self.vq_layer.embedding.t()))
+        
+        indices = torch.argmin(dist, dim=1)  # [B*49]
+        return indices.view(-1, 7, 7)        # [B, 7, 7] — 49 indices per observation
+        

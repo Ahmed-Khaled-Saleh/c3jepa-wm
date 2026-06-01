@@ -36,9 +36,11 @@ def main(cfg: DictConfig):
     # We resolve the save directory path to make sure logs land safely.
     # cfg.logging_params.save_dir = "."
     # cfg.logging_params.ckp_dir = "."
+    slurm_jobid = os.getenv("SLURM_JOB_ID", "local_run")
+    print(f"SLURM_JOB_ID: {slurm_jobid}")
 
-    save_dir = Path(hydra.utils.to_absolute_path(cfg.logging_params.save_dir))
-    save_dir.mkdir(exist_ok=True, parents=True)
+    # save_dir = Path(hydra.utils.to_absolute_path(cfg.logging_params.save_dir))
+    # save_dir.mkdir(exist_ok=True, parents=True)
 
     wandb.init(
         # dir=str(save_dir),
@@ -68,15 +70,16 @@ def main(cfg: DictConfig):
     # --- 6. Initialize Training Manager Class ---
     # (Reuses the single-GPU VQVAETrainer class created previously)
     trainer = VQVAETrainer(
+        cfg=cfg,
         model=model,
-        params=cfg.exp_params,
         device=device,
-        save_dir=str(save_dir),
+        # save_dir=str(save_dir),
+        slurm_jobid=slurm_jobid
     )
 
     # --- 7. Execution Loop ---
     print(f"======= Training {cfg.model.name} =======")
-    best_val_loss = float("inf")
+    # best_val_loss = float("inf")
 
     for epoch in range(1, cfg.exp_params.max_epochs + 1):
         train_loss = trainer.train_epoch(train_loader, epoch)
@@ -91,12 +94,13 @@ def main(cfg: DictConfig):
             "optimizer_state_dict": trainer.optimizer.state_dict(),
             "val_loss": val_loss,
         }
-        torch.save(checkpoint_state, f"{ckp_dir}/last.pt")
+        # torch.save(checkpoint_state, f"{ckp_dir}/last.pt")
+        trainer.ck_pointer.save_checkpoint(state= checkpoint_state, curr_acc= -val_loss, step= epoch)
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            print("--> New best model found! Saving checkpoint...")
-            torch.save(checkpoint_state, f"{ckp_dir}/best_vqvae.pt")
+        # if val_loss < best_val_loss:
+        #     best_val_loss = val_loss
+        #     print("--> New best model found! Saving checkpoint...")
+        #     torch.save(checkpoint_state, f"{ckp_dir}/best_vqvae.pt")
 
     wandb.finish()
 

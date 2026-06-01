@@ -5,30 +5,34 @@
 # %% auto #0
 __all__ = ['VQVAETrainer']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #b16c3ca8
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #84841888
 import torch
-import torch.nn as nn
-
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #4fe45441
 import os
-import torch
+import torch.nn as nn
 import torchvision.utils as vutils
 import wandb
+from ..utils.checkpointer import RetrospectiveCheckpointer
+import hydra
+from pathlib import Path
 
-
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #e098ecf0
 class VQVAETrainer:
 
-    def __init__(self, model, params, device, save_dir):
+    def __init__(self, cfg, model, device, slurm_jobid= None):
+        self.cfg = cfg
         self.model = model.to(device)
-        self.params = params
+        self.slurm_jobid = slurm_jobid if slurm_jobid else "default_job"
         self.device = device
-        self.save_dir = save_dir
+        self.save_dir = Path(hydra.utils.to_absolute_path(cfg.logging_params.save_dir))
+        self.save_dir.mkdir(exist_ok=True, parents=True)
 
         # Match the optimizer configuration from your original script
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=3e-4)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
-            )
+        )
+
+        self.ck_pointer = RetrospectiveCheckpointer(cfg= cfg, slurm_jobid= self.slurm_jobid, agent_id= "vqvae_trainer", rank= 0, n_best=3)
 
         # Create output directories for visual inspection
         os.makedirs(os.path.join(self.save_dir, "Reconstructions"), exist_ok=True)
@@ -53,7 +57,7 @@ class VQVAETrainer:
                 input_img,
                 vq_loss,
                 perplexity,
-                M_N=self.params.get("kld_weight", 1.0),
+                M_N=self.cfg.exp_params.get("kld_weight", 1.0),
                 batch_idx=batch_idx,
             )
 
