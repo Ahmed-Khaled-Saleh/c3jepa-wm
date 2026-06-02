@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'VQVAETrainer']
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #fbc69308
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #fb742a73
 import torch
 import os
 import torch.nn as nn
@@ -15,7 +15,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 import hydra
 from pathlib import Path
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #1c56c84d
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #780cfb44
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -52,7 +52,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #bead55cf
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #6e9736fa
 class VQVAETrainer(BaseTrainer):
 
     def __init__(self, data_module, model, device, **kwargs):

@@ -16,6 +16,8 @@ train_split: 0.9
 seed: 3072
 img_size: 224
 embed_dim: 192
+msg_embedding_dim: 256
+num_embeddings: 256
 history_size: 3
 
 model:
@@ -23,7 +25,7 @@ model:
     checkpoint_path: "${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
 
 trainer:
-  _target_: c3jepa_wm.trainers.msg_trainer.WMTrainer
+  _target_: c3jepa_wm.trainers.world_model.WMTrainer
   epochs: ${pipeline.max_epochs} # Automatically grabs 100
   lr: ${pipeline.lr}             # Automatically grabs 1e-4
 

@@ -5,23 +5,23 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #c531d3cb
+# %% ../../nbs/06a_utils.__init__.ipynb #c51366a0
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #28e83c5f
+# %% ../../nbs/06a_utils.__init__.ipynb #f21c76ec
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
 
-# %% ../../nbs/06a_utils.__init__.ipynb #c9283d6a
+# %% ../../nbs/06a_utils.__init__.ipynb #f2ef6a2d
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f7b7134a
+# %% ../../nbs/06a_utils.__init__.ipynb #57d60039
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -46,8 +46,8 @@ def init_model(cfg: DictConfig):
         
         if hasattr(model_cfg.vqvae, "checkpoint_path") and model_cfg.vqvae.checkpoint_path:
             print(f"Loading pretrained VQ-VAE weights from {model_cfg.vqvae.checkpoint_path}")
-            checkpoint = torch.load(model_cfg.vqvae.checkpoint_path)
-            vqvae.load_state_dict(checkpoint["state_dict"]) 
+            checkpoint = torch.load(model_cfg.vqvae.checkpoint_path, map_location="cpu")
+            vqvae.load_state_dict(checkpoint["model_state_dict"]) 
             
         # Freeze VQ-VAE because it's only used for getting latent codebooks
         vqvae.eval()
@@ -62,7 +62,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #667f400f
+# %% ../../nbs/06a_utils.__init__.ipynb #f06b0761
 def init_trainer(cfg: DictConfig, data_module, models, device):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 

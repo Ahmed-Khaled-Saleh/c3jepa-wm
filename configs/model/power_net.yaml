@@ -2,8 +2,8 @@
 _target_: c3jepa_wm.models.power_net.PowerNet # Full absolute python import path
 
 csi_dim: 1
-embedding_dim: 256
-num_embeddings: 256
+embedding_dim: ${pipeline.msg_embedding_dim}
+num_embeddings: ${pipeline.num_embeddings}
 max_power: 10
 nhead: 4
 num_layers: 2
