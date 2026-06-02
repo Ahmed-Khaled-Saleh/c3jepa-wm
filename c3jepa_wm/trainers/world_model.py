@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #92a8ddd9
+# %% ../../nbs/05c_trainers.control.ipynb #85f3a1aa
 class WMTrainer:
     def __init__(self, cfg):
         self.cfg = cfg
