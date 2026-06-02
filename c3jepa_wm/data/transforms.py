@@ -5,12 +5,12 @@
 # %% auto #0
 __all__ = ['get_transforms']
 
-# %% ../../nbs/01b_data.transforms.ipynb #51ff9882
+# %% ../../nbs/01b_data.transforms.ipynb #76102277
 import torch
 import torchvision.transforms.v2 as v2
 import torch.nn.functional as F
 
-# %% ../../nbs/01b_data.transforms.ipynb #c1ba135f
+# %% ../../nbs/01b_data.transforms.ipynb #1a958b46
 def get_transforms(env= "findgoal", model= "VQVAE", img_size= 224):
 
     if model == "VQVAE" and env == "findgoal":
@@ -41,6 +41,21 @@ def get_transforms(env= "findgoal", model= "VQVAE", img_size= 224):
             ]
         )
     
+    elif model == "JEPA" and env == "findgoal":
+        train_transforms = v2.Compose([
+                v2.ToImage(),
+                v2.ToDtype(v2.torch.float32, scale=True),
+                #v2.Resize((img_size, img_size)),
+                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        
+        val_transforms = v2.Compose([
+                v2.ToImage(),
+                v2.ToDtype(v2.torch.float32, scale=True),
+                #v2.Resize((img_size, img_size)),
+                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+
 
     elif model == "lejepa":
         train_transforms = v2.Compose(
