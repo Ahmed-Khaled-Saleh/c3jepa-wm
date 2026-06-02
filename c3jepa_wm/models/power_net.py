@@ -5,13 +5,13 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #6cf62fb0
+# %% ../../nbs/02b_models.powernet.ipynb #4365f1f8
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02b_models.powernet.ipynb #22897089
+# %% ../../nbs/02b_models.powernet.ipynb #ea5e1a7c
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -43,7 +43,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #d64188bc
+# %% ../../nbs/02b_models.powernet.ipynb #575a1a3a
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -119,7 +119,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #308de963
+# %% ../../nbs/02b_models.powernet.ipynb #9651599d
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -148,7 +148,7 @@ class PowerNet(nn.Module):
         )
 
         self.schedule_head = nn.Linear(embedding_dim, 1)
-        self.power_head = nn.Linear(embedding_dim, 1)
+        self.power_head = nn.Linear(2*embedding_dim, 1)
 
     def forward(self, message_indices, csi):
         """
@@ -186,15 +186,20 @@ class PowerNet(nn.Module):
             value=msg_expanded                               # [B*N, 49, D]
         )                                                    # [B*N, 1, D]
 
-        out = attended.squeeze(1)                            # [B*N, D]
+        # out = attended.squeeze(1)                            # [B*N, D]
 
+        attended_msg = attended.squeeze(1)           # [B*N, D] — message relevance per neighbor
+        csi_expanded_flat = csi_expanded.squeeze(1)  # [B*N, D] — channel representation
+        
         # 4. Per-neighbor decisions
         schedule = torch.sigmoid(
-            self.schedule_head(out)
+            self.schedule_head(attended_msg)         # what does the message contain?
         ).view(B, num_neighbors, 1)
 
+
+        power_input = torch.cat([attended_msg, csi_expanded_flat], dim=-1)  # [B*N, 2D]
         power = torch.sigmoid(
-            self.power_head(out)
+            self.power_head(power_input)             # how hard to deliver this message?
         ).view(B, num_neighbors, 1) * self.max_power
 
         return schedule, power
