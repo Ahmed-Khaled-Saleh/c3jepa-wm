@@ -4,6 +4,6 @@ _target_: c3jepa_wm.models.msg_net.VQVAE # Full absolute python import path
 in_channels: 3
 embedding_dim: 256
 num_embeddings: 256
-hidden_dims: [128, 256, 512]
+hidden_dims: [64, 128, 256, 512, 512]
 beta: 1.0
 img_size: 224
