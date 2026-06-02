@@ -11,12 +11,23 @@ stage: 2
 # Define Stage 2 specific hyperparameters here
 lr: 1e-4
 max_epochs: 100
+num_workers: 6
+train_split: 0.9
+seed: 3072
+img_size: 224
+embed_dim: 192
+history_size: 3
 
 model:
   vqvae:
-    checkpoint_path: "${logging_params.ckp_dir}/vqvae_best.ckpt" # Interpolates the global ckp_dir!
+    checkpoint_path: "${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
 
 trainer:
   _target_: c3jepa_wm.trainers.msg_trainer.WMTrainer
   epochs: ${pipeline.max_epochs} # Automatically grabs 100
   lr: ${pipeline.lr}             # Automatically grabs 1e-4
+
+
+
+
+  

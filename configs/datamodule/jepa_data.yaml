@@ -1,9 +1,9 @@
 # configs/datamodule/vqvae_data.yaml
-_target_: c3jepa_wm.data.data_module.VQVAEDataModule # Full python import path to your datamodule class
+_target_: c3jepa_wm.data.data_module.WMDataModule # Full python import path to your datamodule class
 
 batch_size: 128
 num_workers: 0
-
+history_size: ${pipeline.history_size} # Automatically grabs 3 from pipeline config!
 # Optional: Add any path configurations your dataset needs
 # data_dir: "data/images/"
 # img_size: 224
