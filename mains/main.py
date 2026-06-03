@@ -27,7 +27,7 @@ def main(cfg: DictConfig):
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
-    device = torch.device("cuda") if torch.cuda.is_available() else "cpu" # TODO: remove for traiing on puhti
+    device = torch.device("cuda") #if torch.cuda.is_available() else "cpu" : remove for traiing on puhti
     print(f"Using runtime hardware device: {device}")
 
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
@@ -36,7 +36,7 @@ def main(cfg: DictConfig):
     slurm_jobid = os.getenv("SLURM_JOB_ID", "local_run")
     print(f"SLURM_JOB_ID: {slurm_jobid}")
 
-    wandb.init( # TODO: remove for traiing on puhti
+    wandb.init( 
         name="wm",
         project= cfg.logging_params.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),

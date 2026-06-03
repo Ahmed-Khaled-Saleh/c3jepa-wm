@@ -10,6 +10,8 @@ stage: 2
 
 # Define Stage 2 specific hyperparameters here
 lr: 1e-4
+wm_lr: 1e-4
+power_lr: 3e-4
 max_epochs: 100
 num_workers: 6
 train_split: 0.9
@@ -22,12 +24,13 @@ history_size: 3
 
 model:
   vqvae:
-    checkpoint_path:  "" #"${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
+    checkpoint_path: "/scratch/project_2009050/expirements/findgoal/checkpoints/vqvae_pretraining/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt" #"" #"${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
 
 trainer:
   _target_: c3jepa_wm.trainers.world_model.WMTrainer
   epochs: ${pipeline.max_epochs} # Automatically grabs 100
-  lr: ${pipeline.lr}             # Automatically grabs 1e-4
+  wm_lr: ${pipeline.wm_lr}             # Automatically grabs 1e-4
+  power_lr: ${pipeline.power_lr}       # Automatically grabs 3e-4
   history_size: ${pipeline.history_size} # Automatically grabs 3
   num_preds: 1
   lambda_sigreg: 0.1
@@ -36,6 +39,19 @@ trainer:
   lambda_quality: 0.1
   lambda_send: 0.1
 
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024
 
 
 

@@ -5,13 +5,13 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #1fa75ba5
+# %% ../../nbs/02b_models.powernet.ipynb #76faa30f
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
-# %% ../../nbs/02b_models.powernet.ipynb #f5434af7
+# %% ../../nbs/02b_models.powernet.ipynb #36287852
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -43,7 +43,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #8778375d
+# %% ../../nbs/02b_models.powernet.ipynb #cecbbe8c
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -119,7 +119,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #fc3b4c1f
+# %% ../../nbs/02b_models.powernet.ipynb #4cedacf0
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):

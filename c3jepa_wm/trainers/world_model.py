@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #97a17b29
+# %% ../../nbs/05c_trainers.control.ipynb #ec793263
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #35e58607
+# %% ../../nbs/05c_trainers.control.ipynb #17952c41
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -41,13 +41,14 @@ class TrainerScheduler:
         self.power_scheduler.step(power_val_loss)
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #6217c0b8
+# %% ../../nbs/05c_trainers.control.ipynb #978c8164
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
                  device, 
                  slurm_jobid= None, 
-                 lr=1e-4, 
+                 wm_lr=1e-4, 
+                 power_lr=3e-4,
                  epochs=100, 
                  project_name="c3jepa_wm",
                  ckp_dir= "checkpoints",
@@ -62,7 +63,8 @@ class BaseTrainer:
         self.val_loader = self.data_module.val_dataloader()
 
         self.slurm_jobid = slurm_jobid if slurm_jobid else "default_job"
-        self.lr = lr
+        self.wm_lr = wm_lr
+        self.power_lr = power_lr
         self.epochs = epochs
         self.project_name = project_name
         self.ckp_dir = ckp_dir
@@ -70,8 +72,12 @@ class BaseTrainer:
 
         
 
-    def init_optimizer(self, model):
-        return torch.optim.Adam(model.parameters(), lr=self.lr)
+    def init_optimizer(self, model, lr, weight_decay=0.01):
+        return torch.optim.AdamW(
+                list(model.parameters()),
+                lr=lr,
+                weight_decay=weight_decay
+            )
     
     def train_epoch(self, epoch):
         raise NotImplementedError("train_epoch method must be implemented by subclasses.")   
@@ -80,12 +86,14 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #5b073f32
+# %% ../../nbs/05c_trainers.control.ipynb #9a7a564e
 class WMTrainer(BaseTrainer):
-    def __init__(self, data_module, model, device, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
+    def __init__(self, data_module, model, device, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
             data_module= data_module,
             device= device, 
+            wm_lr= wm_lr,
+            power_lr= power_lr,
             **kwargs)
         
         self.history_size = history_size
@@ -109,8 +117,8 @@ class WMTrainer(BaseTrainer):
             self.vqvae.vq_layer.embedding.detach()
         )
 
-        self.wm_optimizer = self.init_optimizer(self.model)
-        self.power_optimizer = self.init_optimizer(self.power_net)
+        self.wm_optimizer = self.init_optimizer(self.model, lr=self.wm_lr, weight_decay=1e-3)
+        self.power_optimizer = self.init_optimizer(self.power_net, lr=self.power_lr, weight_decay=1e-4)
         self.scheduler = TrainerScheduler(self.wm_optimizer, self.power_optimizer)
         
         
@@ -149,8 +157,6 @@ class WMTrainer(BaseTrainer):
         total_loss_jepa = 0.0
         total_loss_power = 0.0
         for batch_idx, batch in enumerate(self.train_loader):
-            if batch_idx >2:
-                break
             # 0. Zero grads
             self.wm_optimizer.zero_grad()
             self.power_optimizer.zero_grad()
@@ -290,14 +296,16 @@ class WMTrainer(BaseTrainer):
         return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #7ac2d3a7
+# %% ../../nbs/05c_trainers.control.ipynb #46a90c90
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {
         "epoch": epoch,
-        "model_state_dict": self.model.state_dict(),
-        "optimizer_state_dict": self.wm_optimizer.state_dict(),
-        "jepa_val_loss": val_loss[0],
+        "wm_model_state_dict": self.model.state_dict(),
+        "wm_optimizer_state_dict": self.wm_optimizer.state_dict(),
+        "power_model_state_dict": self.power_net.state_dict(),
+        "power_optimizer_state_dict": self.power_optimizer.state_dict(),
+        "wm_val_loss": val_loss[0],
         "power_val_loss": val_loss[1],
     }
     self.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss[0], step= epoch)
