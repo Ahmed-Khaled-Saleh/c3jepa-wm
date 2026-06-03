@@ -158,32 +158,43 @@ class MultiAgentWorldModelDataset(Dataset):
         # ── Sender fields ─────────────────────────────────────────────────
         # We only need the sender's POV at the last history frame
         # (the frame whose encoding becomes the message)
-        sender_pov = episode[f"{sender_id}_pov"][end_idx - 1]                      # (H, W, C)
-        sender_csi = episode[f"{sender_id}_csi"][end_idx - 1]                      # complex scalar
+        # sender_pov = episode[f"{sender_id}_pov"][end_idx - 1]                      # (H, W, C)
+        # sender_csi = episode[f"{sender_id}_csi"][end_idx - 1]                      # complex scalar
+
+        sender_pov_seq = episode[f"{sender_id}_pov"][start_idx : end_idx]  # (T, H, W, C)
+        sender_csi_seq = episode[f"{sender_id}_csi"][start_idx : end_idx]  # (T,) complex
 
         # ── Apply transforms to POV frames ────────────────────────────────
         if self.receiver_transform:
             # Transform each frame independently
             receiver_pov_seq = torch.stack(
                 [self.receiver_transform(receiver_pov_seq[t]) for t in range(self.history_size + 1)]
-            )                                                                        # (T+1, C, H, W)
-        if self.sender_transform:
-            sender_pov = self.sender_transform(sender_pov)                                 # (C, H, W)
+            )                    
+            
         else:
             receiver_pov_seq = torch.from_numpy(receiver_pov_seq).float() / 255.0
-            sender_pov = torch.from_numpy(sender_pov).float() / 255.0
+            
+                                                                # (T+1, C, H, W)
+        if self.sender_transform:
+            # sender_pov = self.sender_transform(sender_pov)                                 # (C, H, W)
+            sender_pov = torch.stack(
+                [self.sender_transform(sender_pov_seq[t]) for t in range(self.history_size)]
+            )  
+            
+        else:
+            sender_pov = torch.from_numpy(sender_pov_seq).float() / 255.0
 
         return {
             # Receiver inputs
-            "receiver_pov_seq": receiver_pov_seq,           # (T+1, C, H, W) — first T are history, last is target
-            "receiver_act_seq": torch.tensor(
+            "pixels": receiver_pov_seq,           # (T+1, C, H, W) — first T are history, last is target
+            "action": torch.tensor(
                 receiver_act_seq, dtype=torch.long
             ),                                               # (T,) discrete actions
 
             # Sender inputs (for VQ-VAE message extraction)
             "sender_pov": sender_pov,                       # (C, H, W)
             "sender_csi": torch.tensor(
-                sender_csi.squeeze(0), dtype=torch.complex64
+                sender_csi_seq, dtype=torch.complex64
             ),                                               # scalar complex
         }
 

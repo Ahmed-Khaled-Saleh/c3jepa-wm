@@ -5,13 +5,13 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #cddf77ca
+# %% ../../nbs/02b_models.powernet.ipynb #d500daa5
 import torch
 from torch import nn
 from torch.nn import functional as F
+from einops import rearrange
 
-
-# %% ../../nbs/02b_models.powernet.ipynb #deda98e5
+# %% ../../nbs/02b_models.powernet.ipynb #a8342a02
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -43,7 +43,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #2b09f209
+# %% ../../nbs/02b_models.powernet.ipynb #f7c55ffd
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -119,7 +119,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #fa8598ef
+# %% ../../nbs/02b_models.powernet.ipynb #dc510907
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -203,3 +203,23 @@ class PowerNet(nn.Module):
         ).view(B, num_neighbors, 1) * self.max_power
 
         return schedule, power
+    
+
+    def loss_fn(self, model, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, schedule, power, pred_loss):
+        with torch.no_grad():
+            pred_emb_zero_msg = model.predict(ctx_emb, ctx_act, None) # pred with no comm.
+
+            msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49)   # (B, T, 49)
+            ctx_msg = msg_indices[:, :ctx_len] # (B, ctx_len, msg_dim)
+            pred_emb_perfect_msg = model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
+
+            perfect_loss = (pred_emb_perfect_msg - tgt_emb).pow(2).mean()
+            value = (pred_emb_zero_msg - tgt_emb).pow(2).mean() - perfect_loss
+            qulity = perfect_loss - pred_loss
+
+        tx_loss =    -self.lambda_value * value * (schedule.float().mean()) + \
+                        self.lambda_quality * qulity * power.mean() + \
+                        self.lambda_pow * power.mean() * (schedule.float().mean()) + \
+                        self.lambda_send * (schedule.float().mean())
+        
+        return tx_loss

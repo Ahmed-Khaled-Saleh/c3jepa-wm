@@ -6,20 +6,20 @@
 __all__ = ['modulate', 'SIGReg', 'DiscreteActionEncoder', 'FeedForward', 'Attention', 'MessageConditionedBlock',
            'ConditionalBlock', 'Block', 'Transformer', 'Embedder', 'MLP', 'ARPredictor', 'detach_clone', 'JEPA']
 
-# %% ../../nbs/02c_models.jepa.ipynb #5ab8a67a
+# %% ../../nbs/02c_models.jepa.ipynb #860f8feb
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #c3b7de93
+# %% ../../nbs/02c_models.jepa.ipynb #235e2f7c
 def modulate(x, shift, scale):
     """AdaLN-zero modulation"""
     return x * (1 + scale) + shift
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #969302fa
+# %% ../../nbs/02c_models.jepa.ipynb #c10d680f
 class SIGReg(torch.nn.Module):
     """Sketch Isotropic Gaussian Regularizer (single-GPU!)"""
 
@@ -49,7 +49,7 @@ class SIGReg(torch.nn.Module):
         return statistic.mean() # average over projections and time
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #7d3f2bd1
+# %% ../../nbs/02c_models.jepa.ipynb #99bc98d0
 class DiscreteActionEncoder(nn.Module):
     def __init__(self, num_actions, action_emb_dim):
         super().__init__()
@@ -63,7 +63,7 @@ class DiscreteActionEncoder(nn.Module):
         return self.embedding(action)
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #f8b3b60d
+# %% ../../nbs/02c_models.jepa.ipynb #60b4a48a
 class FeedForward(nn.Module):
     """FeedForward network used in Transformers"""
 
@@ -82,7 +82,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #04b0db39
+# %% ../../nbs/02c_models.jepa.ipynb #323e24ff
 class Attention(nn.Module):
     """Scaled dot-product attention with causal masking"""
 
@@ -116,7 +116,7 @@ class Attention(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #98f26ee5
+# %% ../../nbs/02c_models.jepa.ipynb #9a7df89c
 class MessageConditionedBlock(nn.Module):
     """Transformer block with AdaLN-zero for actions + cross-attention for message"""
     
@@ -149,11 +149,40 @@ class MessageConditionedBlock(nn.Module):
             nn.Sigmoid()
         )
 
+    # def forward(self, x, c, msg_tokens=None):
+    #     """
+    #     x:          (B, T, D) — state embeddings
+    #     c:          (B, T, D) — action conditioning
+    #     msg_tokens: (B, T, 49, D) — VQ-VAE message tokens, optional
+    #     """
+        
+    #     # 1. AdaLN-zero self-attention (action conditioning)
+    #     shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+    #         self.adaLN_modulation(c).chunk(6, dim=-1)
+    #     )
+    #     x = x + gate_msa * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
+
+    #     # 2. Cross-attention over message tokens (if message provided)
+    #     if msg_tokens is not None:
+    #         # x queries the message: "is anything in this message relevant to my state?"
+    #         msg_attended, _ = self.cross_attn(
+    #             query=self.cross_norm(x),    # (B, T, D)
+    #             key=msg_tokens,              # (B, 49, D)
+    #             value=msg_tokens             # (B, 49, D)
+    #         )
+    #         # Learned gate: how much should I trust this message?
+    #         gate = self.msg_gate(x)          # (B, T, 1)
+    #         x = x + gate * msg_attended
+
+    #     # 3. FFN
+    #     x = x + gate_mlp * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
+    #     return x
+    
     def forward(self, x, c, msg_tokens=None):
         """
-        x:          (B, T, D) — state embeddings
-        c:          (B, T, D) — action conditioning
-        msg_tokens: (B, 49, D) — VQ-VAE message tokens, optional
+        x:          (B, T, D)
+        c:          (B, T, D)
+        msg_tokens: (B, T, 49, D) — one set of 49 tokens per timestep
         """
         # 1. AdaLN-zero self-attention (action conditioning)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
@@ -161,25 +190,40 @@ class MessageConditionedBlock(nn.Module):
         )
         x = x + gate_msa * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
 
-        # 2. Cross-attention over message tokens (if message provided)
+        # 2. Cross-attention over message tokens
         if msg_tokens is not None:
-            # x queries the message: "is anything in this message relevant to my state?"
+            B, T, _, D = msg_tokens.shape
+
+            # Flatten message sequence: (B, T*49, D)
+            # msg_tokens[:, 0, :, :] are positions 0..48
+            # msg_tokens[:, 1, :, :] are positions 49..97  etc.
+            msg_seq = msg_tokens.reshape(B, T * 49, D)   # (B, T*49, D)
+
+            # Build causal mask: state_t can attend to msg_0..msg_t
+            # but NOT msg_{t+1}..msg_{T-1}
+            # query positions: T (one per timestep)
+            # key positions:   T*49 (49 tokens per timestep)
+            mask = torch.ones(T, T * 49, dtype=torch.bool, device=x.device)
+            for t in range(T):
+                # allow state_t to attend to tokens from timesteps 0..t
+                mask[t, :(t + 1) * 49] = False   # False = allow attention
+            # True = block attention (PyTorch convention for attn_mask)
+
             msg_attended, _ = self.cross_attn(
-                query=self.cross_norm(x),    # (B, T, D)
-                key=msg_tokens,              # (B, 49, D)
-                value=msg_tokens             # (B, 49, D)
-            )
-            # Learned gate: how much should I trust this message?
-            gate = self.msg_gate(x)          # (B, T, 1)
+                query=self.cross_norm(x),   # (B, T, D)
+                key=msg_seq,                # (B, T*49, D)
+                value=msg_seq,              # (B, T*49, D)
+                attn_mask=mask              # (T, T*49) broadcast over B and heads
+            )                               # → (B, T, D)
+
+            gate = self.msg_gate(x)         # (B, T, 1)
             x = x + gate * msg_attended
 
         # 3. FFN
         x = x + gate_mlp * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
-    
 
-
-# %% ../../nbs/02c_models.jepa.ipynb #e781b7d3
+# %% ../../nbs/02c_models.jepa.ipynb #e9bc583e
 class ConditionalBlock(nn.Module):
     """Transformer block with AdaLN-zero conditioning"""
 
@@ -207,7 +251,7 @@ class ConditionalBlock(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #f361264a
+# %% ../../nbs/02c_models.jepa.ipynb #f781ac2f
 class Block(nn.Module):
     """Standard Transformer block"""
 
@@ -226,7 +270,7 @@ class Block(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #8cd2a0f4
+# %% ../../nbs/02c_models.jepa.ipynb #5a8278be
 class Transformer(nn.Module):
     """Standard Transformer with support for AdaLN-zero blocks"""
 
@@ -290,7 +334,7 @@ class Transformer(nn.Module):
         return x
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #a5475741
+# %% ../../nbs/02c_models.jepa.ipynb #541096f6
 class Embedder(nn.Module):
     def __init__(
         self,
@@ -320,7 +364,7 @@ class Embedder(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #b690dfc1
+# %% ../../nbs/02c_models.jepa.ipynb #bb5c9c65
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
@@ -349,7 +393,7 @@ class MLP(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #c776b2d8
+# %% ../../nbs/02c_models.jepa.ipynb #f602b594
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -397,7 +441,7 @@ class ARPredictor(nn.Module):
         """
         x:           (B, T, D)    — state embeddings
         c:           (B, T, A)    — action embeddings
-        msg_indices: (B, 49)      — VQ token indices from sender, optional
+        msg_indices: (B, T, 49)      — VQ token indices from sender, optional
         """
         T = x.size(1)
         x = x + self.pos_embedding[:, :T]
@@ -406,14 +450,16 @@ class ARPredictor(nn.Module):
         # Embed message indices → token vectors
         msg_tokens = None
         if msg_indices is not None:
-            msg_tokens = self.msg_token_embedding(msg_indices)  # (B, 49, msg_dim)
-            msg_tokens = self.msg_proj(msg_tokens)              # (B, 49, hidden_dim)
+            msg_indices = rearrange(msg_indices, "b t n -> (b t) n")  # flatten batch and time for embedding
+            msg_tokens = self.msg_token_embedding(msg_indices)  # (B, 49, msg_embedding_dim)
+            msg_tokens = self.msg_proj(msg_tokens)              # (B, 49, D)
+            msg_tokens = rearrange(msg_tokens, "(b t) n d -> b t n d", b=x.size(0), t=T)  # reshape back to (B, T, 49, D)
 
         x = self.transformer(x, c, msg_tokens=msg_tokens)
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #cd13888e
+# %% ../../nbs/02c_models.jepa.ipynb #44db3fa5
 """JEPA Implementation"""
 
 def detach_clone(v):
@@ -455,15 +501,23 @@ class JEPA(nn.Module):
 
         return info
 
-    def predict(self, emb, act_emb):
+    def predict(self, emb, act_emb, msg_indices=None):
         """Predict next state embedding
         emb: (B, T, D)
         act_emb: (B, T, A_emb)
+        msg_indices: (B, T, 49) — VQ token indices from sender, optional
         """
-        preds = self.predictor(emb, act_emb)
+        preds = self.predictor(emb, act_emb, msg_indices=msg_indices)
         preds = self.pred_proj(rearrange(preds, "b t d -> (b t) d"))
         preds = rearrange(preds, "(b t) d -> b t d", b=emb.size(0))
         return preds
+    
+
+    def loss_fn(self, output, pred_emb, target_emb, emb, lambd):
+        output["pred_loss"] = (pred_emb - target_emb).pow(2).mean()
+        output["sigreg_loss"]= self.sigreg(emb.transpose(0, 1))
+        output["jepa_loss"] = output["pred_loss"] + lambd * output["sigreg_loss"] 
+        return output
 
     ####################
     ## Inference only ##

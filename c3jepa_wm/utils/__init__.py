@@ -5,23 +5,23 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #c51366a0
+# %% ../../nbs/06a_utils.__init__.ipynb #d4cf662e
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f21c76ec
+# %% ../../nbs/06a_utils.__init__.ipynb #28b1a8a9
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f2ef6a2d
+# %% ../../nbs/06a_utils.__init__.ipynb #d6c99f2e
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #57d60039
+# %% ../../nbs/06a_utils.__init__.ipynb #ccaaeae5
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -62,7 +62,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f06b0761
+# %% ../../nbs/06a_utils.__init__.ipynb #f3306cd2
 def init_trainer(cfg: DictConfig, data_module, models, device):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
