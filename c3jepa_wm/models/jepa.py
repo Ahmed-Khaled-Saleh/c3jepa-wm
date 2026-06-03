@@ -7,20 +7,20 @@ __all__ = ['batch', 'batch_obs', 'batch_actions', 'msg_indices', 'out', 'modulat
            'FeedForward', 'Attention', 'MessageConditionedBlock', 'ConditionalBlock', 'Block', 'Transformer',
            'Embedder', 'MLP', 'ARPredictor', 'detach_clone', 'JEPA']
 
-# %% ../../nbs/02c_models.jepa.ipynb #a1a2c3b3
+# %% ../../nbs/02c_models.jepa.ipynb #bde76ee0
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #49e942dc
+# %% ../../nbs/02c_models.jepa.ipynb #38360cfb
 def modulate(x, shift, scale):
     """AdaLN-zero modulation"""
     return x * (1 + scale) + shift
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #7aae859b
+# %% ../../nbs/02c_models.jepa.ipynb #24f7871d
 class SIGReg(torch.nn.Module):
     """Sketch Isotropic Gaussian Regularizer (single-GPU!)"""
 
@@ -50,7 +50,7 @@ class SIGReg(torch.nn.Module):
         return statistic.mean() # average over projections and time
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #8432cfd9
+# %% ../../nbs/02c_models.jepa.ipynb #54ed8f2b
 class DiscreteActionEncoder(nn.Module):
     def __init__(self, num_actions, action_emb_dim):
         super().__init__()
@@ -64,7 +64,7 @@ class DiscreteActionEncoder(nn.Module):
         return self.embedding(action)
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #a668a70f
+# %% ../../nbs/02c_models.jepa.ipynb #f837a998
 class FeedForward(nn.Module):
     """FeedForward network used in Transformers"""
 
@@ -83,7 +83,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #40a262e0
+# %% ../../nbs/02c_models.jepa.ipynb #bd49b1c8
 class Attention(nn.Module):
     """Scaled dot-product attention with causal masking"""
 
@@ -117,7 +117,7 @@ class Attention(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #183429ac
+# %% ../../nbs/02c_models.jepa.ipynb #b5e3de4b
 class MessageConditionedBlock(nn.Module):
     """Transformer block with AdaLN-zero for actions + cross-attention for message"""
     
@@ -224,7 +224,7 @@ class MessageConditionedBlock(nn.Module):
         x = x + gate_mlp * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
-# %% ../../nbs/02c_models.jepa.ipynb #4bfb815c
+# %% ../../nbs/02c_models.jepa.ipynb #a87f2c26
 class ConditionalBlock(nn.Module):
     """Transformer block with AdaLN-zero conditioning"""
 
@@ -252,7 +252,7 @@ class ConditionalBlock(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #7724ba17
+# %% ../../nbs/02c_models.jepa.ipynb #f6ac02e7
 class Block(nn.Module):
     """Standard Transformer block"""
 
@@ -271,7 +271,7 @@ class Block(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #0eb7b281
+# %% ../../nbs/02c_models.jepa.ipynb #878a379a
 class Transformer(nn.Module):
     """Standard Transformer with support for AdaLN-zero blocks"""
 
@@ -335,7 +335,7 @@ class Transformer(nn.Module):
         return x
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #4a2391aa
+# %% ../../nbs/02c_models.jepa.ipynb #94500a39
 class Embedder(nn.Module):
     def __init__(
         self,
@@ -365,7 +365,7 @@ class Embedder(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #248c5efb
+# %% ../../nbs/02c_models.jepa.ipynb #f0e37654
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
@@ -394,7 +394,7 @@ class MLP(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #2adde010
+# %% ../../nbs/02c_models.jepa.ipynb #87691761
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -424,7 +424,7 @@ class ARPredictor(nn.Module):
         )
 
         # Embed raw VQ indices → continuous vectors for cross-attention
-        self.msg_token_embedding = nn.Embedding(num_embeddings, msg_embedding_dim)
+        self.msg_token_embedding = nn.Embedding(num_embeddings+1, msg_embedding_dim, padding_idx=num_embeddings) # can resue VQ-VAE's embedding layer
 
         self.transformer = Transformer(
             input_dim,
@@ -460,7 +460,7 @@ class ARPredictor(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #750afb17
+# %% ../../nbs/02c_models.jepa.ipynb #8cf28719
 batch = 32
 batch_obs = torch.randn(batch, num_frames, input_dim)
 batch_actions = torch.randn(batch, num_frames, input_dim)  # assuming action_emb_dim = input_dim for this test
@@ -468,7 +468,7 @@ msg_indices = torch.randint(0, 256, (batch, num_frames, 49))
 
 out = model(batch_obs, batch_actions, msg_indices)
 
-# %% ../../nbs/02c_models.jepa.ipynb #7aa939e9
+# %% ../../nbs/02c_models.jepa.ipynb #fcb1eae4
 """JEPA Implementation"""
 
 def detach_clone(v):

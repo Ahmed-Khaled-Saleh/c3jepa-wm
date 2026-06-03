@@ -5,13 +5,13 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #823f4f7b
+# %% ../../nbs/02b_models.powernet.ipynb #1c457f8d
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
-# %% ../../nbs/02b_models.powernet.ipynb #411a756a
+# %% ../../nbs/02b_models.powernet.ipynb #ce71a4e0
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -43,7 +43,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #c83f6cb6
+# %% ../../nbs/02b_models.powernet.ipynb #6598aefa
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -119,7 +119,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #326b23ba
+# %% ../../nbs/02b_models.powernet.ipynb #09d59f63
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -205,21 +205,54 @@ class PowerNet(nn.Module):
         return schedule, power
     
 
-    def loss_fn(self, model, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, schedule, power, pred_loss):
-        with torch.no_grad():
-            pred_emb_zero_msg = model.predict(ctx_emb, ctx_act, None) # pred with no comm.
+    # def loss_fn(self, model, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, schedule, power, pred_loss):
+    #     with torch.no_grad():
+    #         pred_emb_zero_msg = model.predict(ctx_emb, ctx_act, None) # pred with no comm.
 
-            msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49)   # (B, T, 49)
-            ctx_msg = msg_indices[:, :ctx_len] # (B, ctx_len, msg_dim)
-            pred_emb_perfect_msg = model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
+    #         msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49)   # (B, T, 49)
+    #         ctx_msg = msg_indices[:, :ctx_len] # (B, ctx_len, msg_dim)
+    #         pred_emb_perfect_msg = model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
 
-            perfect_loss = (pred_emb_perfect_msg - tgt_emb).pow(2).mean()
-            value = (pred_emb_zero_msg - tgt_emb).pow(2).mean() - perfect_loss
-            qulity = perfect_loss - pred_loss
+    #         perfect_loss = (pred_emb_perfect_msg - tgt_emb).pow(2).mean()
+    #         value = (pred_emb_zero_msg - tgt_emb).pow(2).mean() - perfect_loss
+    #         qulity = perfect_loss - pred_loss
 
-        tx_loss =    -self.lambda_value * value * (schedule.float().mean()) + \
-                        self.lambda_quality * qulity * power.mean() + \
-                        self.lambda_pow * power.mean() * (schedule.float().mean()) + \
-                        self.lambda_send * (schedule.float().mean())
+    #     tx_loss =   -self.lambda_value * value * (schedule.float().mean()) + \
+    #                 -self.lambda_quality * qulity * power.mean() + \
+    #                 self.lambda_pow * power.mean() * (schedule.float().mean()) + \
+    #                 self.lambda_send * (schedule.float().mean())
         
-        return tx_loss
+    #     return tx_loss
+    
+
+    def loss_fn(self, model, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, 
+            schedule, power, pred_loss, lambda_value, lambda_pow, lambda_send):
+        with torch.no_grad():
+            # Baseline: prediction with no message
+            pred_emb_no_msg = model.predict(ctx_emb, ctx_act, None)
+            baseline_loss = (pred_emb_no_msg - tgt_emb).pow(2).mean()
+
+        # How much did transmitting actually help?
+        # Positive = transmission helped, Negative = transmission hurt
+        comm_gain = baseline_loss - pred_loss  # scalar
+
+        s_mean = schedule.mean()   # (0,1) — how often we transmit
+        p_mean = power.mean()      # (0, P_max) — average power used
+
+        # 1. Reward scheduling when communication improves prediction
+        reward_term = -lambda_value * comm_gain * s_mean
+
+        # 2. Penalize power consumption (only when transmitting)
+        power_term = lambda_pow * p_mean * s_mean
+
+        # 3. Sparsity: penalize transmitting at all (encourages selective sending)
+        sparsity_term = lambda_send * s_mean
+
+        tx_loss = reward_term + power_term + sparsity_term
+        return {
+            "reward_term_loss": reward_term,
+            "power_term_loss": power_term,
+            "sparsity_term_loss": sparsity_term,
+            "tx_loss": tx_loss
+        }
+    

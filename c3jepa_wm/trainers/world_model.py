@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #a6d44cad
+# %% ../../nbs/05c_trainers.control.ipynb #1ed98178
 import math
 import torch
 import os
@@ -16,11 +16,12 @@ import hydra
 from pathlib import Path
 from omegaconf import DictConfig
 from einops import rearrange
-
+import torch.nn.functional as F
 from ..utils.checkpointer import RetrospectiveCheckpointer
+from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #3265400e
+# %% ../../nbs/05c_trainers.control.ipynb #5903f1b1
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -47,6 +48,8 @@ class BaseTrainer:
         self.ckp_dir = ckp_dir
         self.save_dir = save_dir
 
+        
+
     def init_optimizer(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
     
@@ -57,7 +60,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #563274e5
+# %% ../../nbs/05c_trainers.control.ipynb #b4f1bf28
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -77,6 +80,14 @@ class WMTrainer(BaseTrainer):
         self.vqvae = model["vqvae"].to(device)
         self.power_net = model["power_net"].to(device)
         self.jepa = model["jepa"].to(device)
+
+
+        self.model.predictor.msg_token_embedding.weight.data[:self.vqvae.vq_layer.K].copy_(
+            self.vqvae.vq_layer.embedding.detach()
+        )
+        self.power_net.msg_embedding.weight.data.copy_(
+            self.vqvae.vq_layer.embedding.detach()
+        )
 
         self.optimizer = self.init_optimizer()
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -113,136 +124,145 @@ class WMTrainer(BaseTrainer):
 
 
     def train_epoch(self, epoch):
+        self.model.train()
+        self.power_net.train()
+        total_loss_jepa = 0.0
+        total_loss_power = 0.0
         for batch in self.train_loader:
+            # 0. Zero grads
+            self.jepa_optimizer.zero_grad()
+            self.power_optimizer.zero_grad()
 
-            # self.optimizer.zero_grad() # comment for now until we still down optimizer choice.
             # 1. Get message indices from pretrained VQ-VAE
+            msg_indices = self.get_msg_indices(
+                batch["sender_pov_seq"]
+            )  # (B*T, 49)
             
-            msg_indices = self.get_msg_indices(batch["sender_pov_seq"])   # (B*T, 49)
-            csi_flat = rearrange(batch["sender_csi"].to(self.device), "b t n d -> (b t) n d")  # (B*T, N, D)
-            schedule, power = self.power_net(msg_indices, csi_flat) # power and schedule pred     # (B*T, n, 1)       
+            B = batch["sender_pov_seq"].shape[0]
+            T = self.history_size
             
-            received_msg  = self.channel(schedule, power, msg_indices, csi_flat) # channel output (B*T, 49)
-            received_msg = rearrange(received_msg, "(b t) msg_dim -> b t msg_dim", msg_dim=49) # (B, T, 49)
+            csi_flat = rearrange(
+                batch["sender_csi"].to(self.device), "b t n d -> (b t) n d"
+            )  # (B*T, N, D)
 
-            # 2. Encode receiver history with JEPA encoder
+            # 2. PowerNet: schedule and power decisions
+            schedule, power = self.power_net(msg_indices, csi_flat)  # (B*T, N, 1)
+
+            # 3. Channel
+            received_msg = channel(
+                schedule, power, msg_indices, csi_flat, device=self.device
+            )  # (B*T, 49)
+
+            received_msg = rearrange(
+                received_msg, "(b t) msg_dim -> b t msg_dim", b=B, t=T
+            )  # (B, T, 49)
+
+            # 4. Encode receiver observations
             output = self.model.encode(batch)
-            
-            # 3. Forward through world model predictor
-            ctx_len = self.history_size
-            n_preds = self.num_preds
-            lambd = self.lambda_sigreg
-            
-            emb = output["emb"]  # (B, T+1, D)
-            act_emb = output["act_emb"].squeeze(2) # (B, T, D_act)
-    
-            ctx_emb = emb[:, :ctx_len]
-            ctx_act = act_emb[:, : ctx_len]
-            ctx_msg = received_msg[:, :ctx_len] # (B, ctx_len, msg_dim)
+            emb = output["emb"]                          # (B, T+1, D)
+            act_emb = output["act_emb"].reshape(B, T, -1)  # (B, T, act_emb_dim)
 
-            tgt_emb = emb[:, n_preds:] # label
-            pred_emb = self.model.predict(ctx_emb, ctx_act, ctx_msg) # pred           
+            # 5. Slice context and target
+            ctx_emb = emb[:, :T]                         # (B, T, D)
+            ctx_act = act_emb[:, :T]                     # (B, T, act_emb_dim)
+            ctx_msg = received_msg[:, :T]                # (B, T, 49) — raw indices, embedded inside predictor
+            tgt_emb = emb[:, self.num_preds:]            # (B, T, D)
 
-            # 4. Compute losses
-            output = self.model.loss_fn(output, pred_emb, tgt_emb, emb, lambd)
-            # output["pred_loss"] = (pred_emb - tgt_emb).pow(2).mean()
-            # output["sigreg_loss"]= self.sigreg(emb.transpose(0, 1))
-            # output["jepa_loss"] = output["pred_loss"] + lambd * output["sigreg_loss"] 
+            # 6. Predict
+            pred_emb = self.model.predict(ctx_emb, ctx_act, ctx_msg)  # (B, T, D)
 
-            output['tx_loss'] = self.power_net.loss_fn(self.model, 
-                                                       ctx_len,
-                                                       ctx_emb,
-                                                       ctx_act,
-                                                       msg_indices,
-                                                       tgt_emb,
-                                                       schedule,
-                                                       power,
-                                                       output["pred_loss"]
-                                                       )
+            # 7. JEPA loss
+            output = self.model.loss_fn(output, pred_emb, tgt_emb, emb, self.lambda_sigreg)
 
+            # 8. TX loss (uses pred_loss so compute before backward)
+            power_loss = self.power_net.loss_fn(
+                self.model, T, ctx_emb, ctx_act,
+                msg_indices, tgt_emb, schedule, power,
+                output["pred_loss"], self.lambda_value, self.lambda_pow, self.lambda_send
+            )
+            for k, v in power_loss.items():
+                output[k] = v
+
+            msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49)   # (B, T, 49)
+            ctx_msg = msg_indices[:, :T] # (B, ctx_len, msg_dim)
+            pred_emb_perfect_msg = self.model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
+            perfect_loss = (pred_emb_perfect_msg - tgt_emb).pow(2).mean()
+            quality = perfect_loss - output["pred_loss"]
+
+            loss_dict = {k: v for k, v in output.items() if "loss" in k}
+            loss_dict["quality"] = quality.item()
+            wandb.log({f"train_{k}": v.item() for k, v in loss_dict.items()})
+
+            # 9. Backward in correct order
             output['jepa_loss'].backward(retain_graph=True)
             output['tx_loss'].backward()
 
+            total_loss_jepa += output['jepa_loss'].item()
+            total_loss_power += output['tx_loss'].item()
+
+            # 10. Clip and step
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             torch.nn.utils.clip_grad_norm_(self.power_net.parameters(), max_norm=1.0)
-
             self.jepa_optimizer.step()
             self.power_optimizer.step()
 
+        avg_loss_jepa = total_loss_jepa / len(self.train_loader)
+        avg_loss_power = total_loss_power / len(self.train_loader)
+        print(f"Epoch [{epoch}/{self.epochs}] - Train JEPA Loss: {avg_loss_jepa:.4f}, Power Loss: {avg_loss_power:.4f}")
+        wandb.log({"train_avg_jepa_loss": avg_loss_jepa, "train_avg_power_loss": avg_loss_power}, step=epoch)
+
     @torch.no_grad()
-    def channel(self, schedule, power, msg_indices, csi, code_book_size= 128):
-        """Applies channel effect: 1- Binarization, 2-BPSK modulation, 3- Power scaling, 4- AWGN noise addition, 5- Demodulation, 6- De-binarization
-        Args:
-            schedule: (B*T, n, 1)
-            power: (B*T, n, 1)
-            msg_indices: (B*T, msg_dim)
-            csi: (B*T, n, 1)
-        Returns:
-            recovered_indices: (B*T, msg_dim)
-        """
-        if schedule is None or power is None:
-            return msg_indices  # No channel effects, return original message indices
-        else:
-            symbol_length = int(math.log2(code_book_size)) # Number of bits needed to represent codebook size
-            schedule = rearrange(schedule, "b n d -> (b n) d", d= 1)  # (B*T*n, d)
-            power = rearrange(power, "b n d -> (b n) d", d= 1)  # (B*T*n, d)
-            csi = rearrange(csi, "b n d -> (b n) d", d= 1)  # (B*T*n, d)
-
-            # Simulate channel effects
-            # Binarize message indices
-            batch_size, msg_dim = msg_indices.shape
-            msg_bits = torch.zeros(batch_size, msg_dim * symbol_length, device=self.device) 
-            for i in range(msg_dim):
-                for b in range(symbol_length):
-                    msg_bits[:, i * symbol_length + b] = (msg_indices[:, i] >> b) & 1
-            # BPSK modulation
-            modulated = 2 * msg_bits - 1  # Map 0 -> -1, 1 -> +1
-            # Apply power scaling
-            power = power.unsqueeze(-1)  # (B, T, 1)
-            modulated = modulated * torch.sqrt(power)  # Scale by sqrt of power
-            # Add AWGN noise
-            channel_noise = torch.randn_like(modulated) * 0.1  # Adjust noise power as needed
-            modulated_received = modulated*csi + channel_noise
-            # Demodulation (assuming perfect synchronization and channel estimation)
-            received = modulated_received * torch.conj(csi) / (torch.abs(csi)**2 + 1e-8)  # Zero-forcing equalization
-            demodulated = (received.real > 0).float()  # Simple thresholding for BPSK
-            # De-binarization 
-            recovered_indices = torch.zeros(batch_size, msg_dim, device=self.device, dtype=torch.long)
-            for i in range(msg_dim):
-                for b in range(symbol_length):
-                    recovered_indices[:, i] += (demodulated[:, i * symbol_length + b] > 0).long() << b
-            return recovered_indices
-            
-
     def validate_epoch(self, epoch):
-        pass
-        # self.model.eval()
-        # total_loss = 0.0
-        # with torch.no_grad():
-        #     for batch_idx, batch in enumerate(self.val_loader):
-        #         batch = {k: v.to(self.device) for k, v in batch.items()}
-        #         loss = self.model.compute_loss(batch)
-        #         total_loss += loss.item()
+        self.model.eval()
+        total_loss_jepa = 0.0
+        total_loss_power = 0.0
+        for batch_idx, batch in enumerate(self.val_loader):
+            batch = {k: v.to(self.device) for k, v in batch.items()}
+            # 1. Get message indices from pretrained VQ-VAE
+            msg_indices = self.get_msg_indices(
+                batch["sender_pov_seq"]
+            )  # (B*T, 49) 
+            B = batch["sender_pov_seq"].shape[0]
+            T = self.history_size
+            csi_flat = rearrange(
+                batch["sender_csi"].to(self.device), "b t n d -> (b t) n d"
+            )  # (B*T, N, D)
+            # 2. PowerNet: schedule and power decisions
+            schedule, power = self.power_net(msg_indices, csi_flat)  # (B*T, N, 1)
+            # 3. Channel
+            received_msg = channel(
+                schedule, power, msg_indices, csi_flat, device=self.device
+            )  # (B*T, 49)
+            received_msg = rearrange(
+                received_msg, "(b t) msg_dim -> b t msg_dim", b=B, t=T
+            )  # (B, T, 49)
+            # 4. Encode receiver observations
+            output = self.model.encode(batch)
+            emb = output["emb"]                          # (B, T+1, D)
+            act_emb = output["act_emb"].reshape(B, T, -1)  # (B, T, act_emb_dim)
+            # 5. Slice context and target
+            ctx_emb = emb[:, :T]                         # (B, T, D)
+            ctx_act = act_emb[:, :T]                     # (B, T, act_emb_dim)
+            ctx_msg = received_msg[:, :T]                # (B, T, 49) — raw indices, embedded inside predictor
+            tgt_emb = emb[:, self.num_preds:]            # (B, T, D)
+            # 6. Predict
+            pred_emb = self.model.predict(ctx_emb, ctx_act, ctx_msg)  # (B, T, D)
+            # 7. JEPA and powenet losses
+            output = self.model.loss_fn(output, pred_emb, tgt_emb, emb, self.lambda_sigreg)
+            power_loss = self.power_net.loss_fn(
+                self.model, T, ctx_emb, ctx_act,
+                msg_indices, tgt_emb, schedule, power,
+                output["pred_loss"], self.lambda_value, self.lambda_pow, self.lambda_send
+            )
+            for k, v in power_loss.items():
+                output[k] = v
+            total_loss_jepa += output['jepa_loss'].item()    
+            total_loss_power += output['tx_loss'].item()
 
-        #         # Log reconstructions for the first batch of each epoch
-        #         if batch_idx == 0:
-        #             recon_images = self.model.reconstruct(batch)
-        #             recon_grid = vutils.make_grid(recon_images.cpu(), nrow=4, normalize=True)
-        #             wandb.log({"reconstructions": [wandb.Image(recon_grid)]}, step=epoch)
-
-        # avg_loss = total_loss / len(self.val_loader)
-        # print(f"Epoch [{epoch}/{self.epochs}] - Val Loss: {avg_loss:.4f}")
-        # wandb.log({"val_loss": avg_loss}, step=epoch)
-
-        # # Step the learning rate scheduler
-        # self.scheduler.step(avg_loss)
-
-        # # Checkpointing based on validation loss
-        # self.ck_pointer.save_checkpoint(model_state=self.model.state_dict(),
-        #                                 optimizer_state=self.optimizer.state_dict(),
-        #                                 epoch=epoch,
-        #                                 val_loss=avg_loss)
-        
+        avg_loss_jepa = total_loss_jepa / len(self.val_loader)
+        avg_loss_power = total_loss_power / len(self.val_loader)
+        print(f"Epoch [{epoch}/{self.epochs}] - Val JEPA Loss: {avg_loss_jepa:.4f}, Val Power Loss: {avg_loss_power:.4f}")
+        wandb.log({"val_avg_jepa_loss": avg_loss_jepa, "val_avg_power_loss": avg_loss_power}, step=epoch)
 
 
 
