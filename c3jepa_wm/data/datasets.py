@@ -96,6 +96,7 @@ class MultiAgentWorldModelDataset(Dataset):
         split="train",
         val_ratio=0.1,
         history_size=3,        # T: number of frames fed to predictor
+        num_preds= 1,          # number of future frames to predict (currently only supports 1)
         receiver_transform=None,
         sender_transform=None,
     ):
@@ -105,6 +106,7 @@ class MultiAgentWorldModelDataset(Dataset):
         self.receiver_transform = receiver_transform
         self.sender_transform = sender_transform
         self.history_size = history_size
+        self.num_preds = num_preds
         self.file = None
         self.index_map = []
 
@@ -127,7 +129,7 @@ class MultiAgentWorldModelDataset(Dataset):
 
                 # Need history_size frames + 1 target frame
                 # so valid start indices are [0, num_frames - history_size - 1]
-                for start_idx in range(num_frames - history_size):
+                for start_idx in range(num_frames - history_size - num_preds):
                     # Alternate sender/receiver between agents to save training time
                     # Even indices: agent 0 is sender, agent 1 is receiver
                     # Odd indices:  agent 1 is sender, agent 0 is receiver
@@ -152,7 +154,7 @@ class MultiAgentWorldModelDataset(Dataset):
 
         # ── Receiver fields ──────────────────────────────────────────────
         # POV frames: history_size frames as input, +1 as prediction target
-        receiver_pov_seq = episode[f"{receiver_id}_pov"][start_idx : end_idx + 1]  # (T+1, H, W, C)
+        receiver_pov_seq = episode[f"{receiver_id}_pov"][start_idx : end_idx + self.num_preds]  # (T+num_preds, H, W, C)
         receiver_act_seq = episode[f"{receiver_id}_act"][start_idx : end_idx]      # (T,)
 
         # ── Sender fields ─────────────────────────────────────────────────

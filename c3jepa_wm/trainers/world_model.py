@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #dc457656
+# %% ../../nbs/05c_trainers.control.ipynb #a6d44cad
 import math
 import torch
 import os
@@ -20,7 +20,7 @@ from einops import rearrange
 from ..utils.checkpointer import RetrospectiveCheckpointer
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #555650f9
+# %% ../../nbs/05c_trainers.control.ipynb #3265400e
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -57,7 +57,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #a7ed03e0
+# %% ../../nbs/05c_trainers.control.ipynb #563274e5
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -134,8 +134,8 @@ class WMTrainer(BaseTrainer):
             lambd = self.lambda_sigreg
             
             emb = output["emb"]  # (B, T+1, D)
-            act_emb = output["act_emb"] # (B, T, D_act)
-
+            act_emb = output["act_emb"].squeeze(2) # (B, T, D_act)
+    
             ctx_emb = emb[:, :ctx_len]
             ctx_act = act_emb[:, : ctx_len]
             ctx_msg = received_msg[:, :ctx_len] # (B, ctx_len, msg_dim)
@@ -191,7 +191,7 @@ class WMTrainer(BaseTrainer):
             # Simulate channel effects
             # Binarize message indices
             batch_size, msg_dim = msg_indices.shape
-            msg_bits = torch.zeros(batch_size, msg_dim * symbol_length, device=self.device)  # Assuming 7 bits per index
+            msg_bits = torch.zeros(batch_size, msg_dim * symbol_length, device=self.device) 
             for i in range(msg_dim):
                 for b in range(symbol_length):
                     msg_bits[:, i * symbol_length + b] = (msg_indices[:, i] >> b) & 1
@@ -202,8 +202,9 @@ class WMTrainer(BaseTrainer):
             modulated = modulated * torch.sqrt(power)  # Scale by sqrt of power
             # Add AWGN noise
             channel_noise = torch.randn_like(modulated) * 0.1  # Adjust noise power as needed
-            received = modulated*csi + channel_noise
+            modulated_received = modulated*csi + channel_noise
             # Demodulation (assuming perfect synchronization and channel estimation)
+            received = modulated_received * torch.conj(csi) / (torch.abs(csi)**2 + 1e-8)  # Zero-forcing equalization
             demodulated = (received.real > 0).float()  # Simple thresholding for BPSK
             # De-binarization 
             recovered_indices = torch.zeros(batch_size, msg_dim, device=self.device, dtype=torch.long)
