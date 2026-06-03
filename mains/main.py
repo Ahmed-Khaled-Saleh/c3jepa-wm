@@ -36,11 +36,11 @@ def main(cfg: DictConfig):
     slurm_jobid = os.getenv("SLURM_JOB_ID", "local_run")
     print(f"SLURM_JOB_ID: {slurm_jobid}")
 
-    # wandb.init( # TODO: remove for traiing on puhti
-    #     name="vqa-test",
-    #     project= cfg.logging_params.project_name,
-    #     config=OmegaConf.to_container(cfg, resolve=True),
-    # )
+    wandb.init( # TODO: remove for traiing on puhti
+        name="wm",
+        project= cfg.logging_params.project_name,
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
 
     # --- 4. Setup Data Components ---
     # Pass parameters straight from Hydra's dataset group dictionary
@@ -55,22 +55,22 @@ def main(cfg: DictConfig):
     trainer = init_trainer(cfg, data_module, model, device)
 
     # --- 7. Execution Loop ---
-    # print(f"======= Training {cfg.model.name} =======")
+    print(f"======= Training {cfg.model.name} =======")
 
-    # for epoch in range(1, cfg.pipeline.max_epochs + 1):
-    #     train_loss = trainer.train_epoch(epoch)
-    #     val_loss = trainer.validate_epoch(epoch)
-    #     trainer.scheduler.step(val_loss)
+    for epoch in range(1, cfg.pipeline.max_epochs + 1):
+        train_loss = trainer.train_epoch(epoch)
+        val_loss = trainer.validate_epoch(epoch)
+        trainer.scheduler.step(val_loss)
 
-    #     checkpoint_state = {
-    #         "epoch": epoch,
-    #         "model_state_dict": model.state_dict(),
-    #         "optimizer_state_dict": trainer.optimizer.state_dict(),
-    #         "val_loss": val_loss,
-    #     }
-    #     trainer.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
+        checkpoint_state = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": trainer.optimizer.state_dict(),
+            "val_loss": val_loss,
+        }
+        trainer.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
 
-    # wandb.finish()
+    wandb.finish()
 
 
 if __name__ == "__main__":

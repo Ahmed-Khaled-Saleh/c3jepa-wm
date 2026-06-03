@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #1ed98178
+# %% ../../nbs/05c_trainers.control.ipynb #29eef50e
 import math
 import torch
 import os
@@ -21,7 +21,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #5903f1b1
+# %% ../../nbs/05c_trainers.control.ipynb #39c395c3
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -60,7 +60,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #b4f1bf28
+# %% ../../nbs/05c_trainers.control.ipynb #76ea3ef8
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
