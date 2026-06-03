@@ -19,4 +19,4 @@ cd /projappl/project_2009050/c3jepa-wm/mains/
 
 # ts=$(date +%Y%m%d_%H%M%S)
 # srun torchrun --standalone --nnodes=1 --nproc_per_node=1 train_wm.py --config ../cfgs/findgoal/mawm/ablations/datasize/mawm_ds_1k.yaml --env_file ../.env --timestamp ${ts}
-srun python main.py pipeline=jepa_train logging_params.project_name="jepa_train"
+srun python main.py pipeline=wm_train logging_params.project_name="jepa_train"

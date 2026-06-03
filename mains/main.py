@@ -55,20 +55,11 @@ def main(cfg: DictConfig):
     trainer = init_trainer(cfg, data_module, model, device)
 
     # --- 7. Execution Loop ---
-    print(f"======= Training {cfg.model.name} =======")
-
     for epoch in range(1, cfg.pipeline.max_epochs + 1):
         train_loss = trainer.train_epoch(epoch)
         val_loss = trainer.validate_epoch(epoch)
         trainer.scheduler.step(val_loss)
-
-        checkpoint_state = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": trainer.optimizer.state_dict(),
-            "val_loss": val_loss,
-        }
-        trainer.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
+        trainer.checkpoint(epoch, val_loss)
 
     wandb.finish()
 

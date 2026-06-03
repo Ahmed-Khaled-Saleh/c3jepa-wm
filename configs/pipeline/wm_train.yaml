@@ -22,12 +22,19 @@ history_size: 3
 
 model:
   vqvae:
-    checkpoint_path: "${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
+    checkpoint_path:  "" #"${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
 
 trainer:
   _target_: c3jepa_wm.trainers.world_model.WMTrainer
   epochs: ${pipeline.max_epochs} # Automatically grabs 100
   lr: ${pipeline.lr}             # Automatically grabs 1e-4
+  history_size: ${pipeline.history_size} # Automatically grabs 3
+  num_preds: 1
+  lambda_sigreg: 0.1
+  lambda_pow: 0.1
+  lambda_value: 0.1
+  lambda_quality: 0.1
+  lambda_send: 0.1
 
 
 

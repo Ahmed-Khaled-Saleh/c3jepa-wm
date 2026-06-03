@@ -5,9 +5,10 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'VQVAETrainer']
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #56600d38
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #3feb3b40
 import torch
 import os
+from fastcore.utils import patch
 import torch.nn as nn
 import torchvision.utils as vutils
 import wandb
@@ -15,7 +16,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 import hydra
 from pathlib import Path
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #97fd99e0
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #0ea9e1f4
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -52,7 +53,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #1185900a
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #fd5ac680
 class VQVAETrainer(BaseTrainer):
 
     def __init__(self, data_module, model, device, **kwargs):
@@ -163,3 +164,16 @@ class VQVAETrainer(BaseTrainer):
             {"Visual Reconstructions": wandb.Image(recons_path, caption=f"Epoch {epoch}")}
         )
 
+
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #dc59cf2a
+@patch
+def checkpoint(self: VQVAETrainer, epoch, val_loss):
+    checkpoint_state = {
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "val_loss": val_loss,
+        }
+    self.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
+
+    
