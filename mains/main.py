@@ -1,16 +1,44 @@
+# import os
+# import random
+# from pathlib import Path
+# import hydra
+# import numpy as np
+# from omegaconf import DictConfig, OmegaConf
+# import torch
+# import wandb
+# from dotenv import load_dotenv
+
+# from c3jepa_wm.utils import init_data, init_model, init_trainer
+
+print("A", flush=True)
 import os
+
+print("B", flush=True)
 import random
+
+print("C", flush=True)
 from pathlib import Path
+
+print("D", flush=True)
 import hydra
-import numpy as np
+print("D.5", flush=True)
 from omegaconf import DictConfig, OmegaConf
-import torch
-import wandb
+print("D.6", flush=True)
 from dotenv import load_dotenv
 
+print("E", flush=True)
+import numpy as np
+
+print("F", flush=True)
+import torch
+
+print("G", flush=True)
+import wandb
+
+print("H", flush=True)
 from c3jepa_wm.utils import init_data, init_model, init_trainer
 
-
+print("I", flush=True)
 def seed_everything(seed: int):
     random.seed(seed)
     np.random.seed(seed)
