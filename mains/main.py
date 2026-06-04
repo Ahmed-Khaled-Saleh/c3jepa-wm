@@ -50,37 +50,41 @@ def seed_everything(seed: int):
 # 1. Point hydra to your configuration folder and master file
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
+    print("Hydra Config Loaded Successfully!", flush=True)
     # Optional: print config block in terminal to confirm changes at runtime
-    print(OmegaConf.to_yaml(cfg, resolve=True))
+    print(OmegaConf.to_yaml(cfg, resolve=True), flush=True)
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
     device = torch.device("cuda") #if torch.cuda.is_available() else "cpu" : remove for traiing on puhti
-    print(f"Using runtime hardware device: {device}")
+    print(f"Using runtime hardware device: {device}", flush=True)
 
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
     # Hydra creates an isolated working directory for every run automatically.
     # We resolve the save directory path to make sure logs land safely.
     slurm_jobid = os.getenv("SLURM_JOB_ID", "local_run")
-    print(f"SLURM_JOB_ID: {slurm_jobid}")
+    print(f"SLURM_JOB_ID: {slurm_jobid}", flush=True)
 
     wandb.init( 
         name="wm",
         project= cfg.logging_params.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
-
+    print("Weights & Biases Initialized Successfully!", flush=True)
     # --- 4. Setup Data Components ---
     # Pass parameters straight from Hydra's dataset group dictionary
     data_module = init_data(cfg)
+    print("Data Module Initialized Successfully!", flush=True)
 
     # --- 5. Build Model Architecture ---
     # Filter out 'name' so it matches your architecture's constructor signature
     model = init_model(cfg)
+    print("Model Initialized Successfully!", flush=True)
 
     # --- 6. Initialize Training Manager Class ---
     # (Reuses the single-GPU VQVAETrainer class created previously)
     trainer = init_trainer(cfg, data_module, model, device)
+    print("Trainer Initialized Successfully!", flush=True)
 
     # --- 7. Execution Loop ---
     for epoch in range(1, cfg.pipeline.max_epochs + 1):
