@@ -43,8 +43,8 @@ def main(cfg: DictConfig):
         name="wm",
         project= cfg.logging_params.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
-        # mode="offline",
-        settings=wandb.Settings(start_method="thread")
+        mode="offline",
+        # settings=wandb.Settings(start_method="thread")
     )
 
     # logger = SlurmSafeLogger(

@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #508d752c
+# %% ../../nbs/05c_trainers.control.ipynb #19a85536
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #6acfe575
+# %% ../../nbs/05c_trainers.control.ipynb #f5272bfc
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -41,7 +41,7 @@ class TrainerScheduler:
         self.power_scheduler.step(power_val_loss)
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #7a324ce8
+# %% ../../nbs/05c_trainers.control.ipynb #c003dddc
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -86,7 +86,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #42fc1c23
+# %% ../../nbs/05c_trainers.control.ipynb #1f66d6ec
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -157,6 +157,7 @@ class WMTrainer(BaseTrainer):
         total_loss_jepa = 0.0
         total_loss_power = 0.0
         for batch_idx, batch in enumerate(self.train_loader):
+            batch = {k: v.to(self.device) for k, v in batch.items()}
             # 0. Zero grads
             self.wm_optimizer.zero_grad()
             self.power_optimizer.zero_grad()
@@ -238,7 +239,8 @@ class WMTrainer(BaseTrainer):
         avg_loss_power = total_loss_power / len(self.train_loader)
         print(f"Epoch [{epoch}/{self.epochs}] - Train JEPA Loss: {avg_loss_jepa:.4f}, Power Loss: {avg_loss_power:.4f}")
         wandb.log({"train_avg_jepa_loss": avg_loss_jepa, "train_avg_power_loss": avg_loss_power}, step=epoch)
-
+        return avg_loss_jepa, avg_loss_power
+    
     @torch.no_grad()
     def validate_epoch(self, epoch):
         self.model.eval()
@@ -296,7 +298,7 @@ class WMTrainer(BaseTrainer):
         return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #448a80eb
+# %% ../../nbs/05c_trainers.control.ipynb #95919396
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {
