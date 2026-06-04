@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #a5d05a89
+# %% ../../nbs/05c_trainers.control.ipynb #508d752c
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #bcd21242
+# %% ../../nbs/05c_trainers.control.ipynb #6acfe575
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -41,7 +41,7 @@ class TrainerScheduler:
         self.power_scheduler.step(power_val_loss)
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #900b0135
+# %% ../../nbs/05c_trainers.control.ipynb #7a324ce8
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -86,7 +86,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #669153f3
+# %% ../../nbs/05c_trainers.control.ipynb #42fc1c23
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -296,7 +296,7 @@ class WMTrainer(BaseTrainer):
         return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #f073ca27
+# %% ../../nbs/05c_trainers.control.ipynb #448a80eb
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {

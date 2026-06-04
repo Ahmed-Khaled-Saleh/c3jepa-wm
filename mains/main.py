@@ -1,42 +1,19 @@
-# import os
-# import random
-# from pathlib import Path
-# import hydra
-# import numpy as np
-# from omegaconf import DictConfig, OmegaConf
-# import torch
-# import wandb
-# from dotenv import load_dotenv
-
-# from c3jepa_wm.utils import init_data, init_model, init_trainer
-
-print("A", flush=True)
 import os
-
-print("B", flush=True)
 import random
-
-print("C", flush=True)
 from pathlib import Path
-
-print("D", flush=True)
 import hydra
-print("D.5", flush=True)
+import numpy as np
 from omegaconf import DictConfig, OmegaConf
-print("D.6", flush=True)
+import torch
+import wandb
 from dotenv import load_dotenv
 
-print("E", flush=True)
-import numpy as np
+from c3jepa_wm.utils import init_data, init_model, init_trainer
 
-print("F", flush=True)
-import torch
-
-print("G", flush=True)
-import wandb
 
 print("H", flush=True)
 from c3jepa_wm.utils import init_data, init_model, init_trainer
+# from c3jepa_wm.loggers.base import SlurmSafeLogger
 
 print("I", flush=True)
 def seed_everything(seed: int):
@@ -50,7 +27,6 @@ def seed_everything(seed: int):
 # 1. Point hydra to your configuration folder and master file
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
-    print("Hydra Config Loaded Successfully!", flush=True)
     # Optional: print config block in terminal to confirm changes at runtime
     print(OmegaConf.to_yaml(cfg, resolve=True), flush=True)
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
@@ -68,10 +44,19 @@ def main(cfg: DictConfig):
     wandb.init( 
         name="wm",
         project= cfg.logging_params.project_name,
-        config = {
-            "seed": cfg.exp_params.manual_seed,}
-        # config=OmegaConf.to_container(cfg, resolve=True),
+        config=OmegaConf.to_container(cfg, resolve=True),
+        mode="disabled",
     )
+    print("after init", flush=True)
+
+    # logger = SlurmSafeLogger(
+    #     log_dir=cfg.logging_params.save_dir,
+    #     use_wandb=True,
+    #     wandb_project=cfg.logging_params.project_name,
+    #     wandb_name="wm",
+    #     wandb_config=OmegaConf.to_container(cfg, resolve=True)
+    # )
+
     print("Weights & Biases Initialized Successfully!", flush=True)
     # --- 4. Setup Data Components ---
     # Pass parameters straight from Hydra's dataset group dictionary
@@ -96,7 +81,7 @@ def main(cfg: DictConfig):
         trainer.checkpoint(epoch, val_loss)
 
     wandb.finish()
-
+    # logger.finish()
 
 if __name__ == "__main__":
     main()
