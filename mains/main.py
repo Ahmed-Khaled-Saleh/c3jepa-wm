@@ -11,11 +11,9 @@ from dotenv import load_dotenv
 from c3jepa_wm.utils import init_data, init_model, init_trainer
 
 
-print("H", flush=True)
 from c3jepa_wm.utils import init_data, init_model, init_trainer
 # from c3jepa_wm.loggers.base import SlurmSafeLogger
 
-print("I", flush=True)
 def seed_everything(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -45,9 +43,9 @@ def main(cfg: DictConfig):
         name="wm",
         project= cfg.logging_params.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
-        mode="offline",
+        # mode="offline",
+        settings=wandb.Settings(start_method="thread")
     )
-    print("after init", flush=True)
 
     # logger = SlurmSafeLogger(
     #     log_dir=cfg.logging_params.save_dir,
