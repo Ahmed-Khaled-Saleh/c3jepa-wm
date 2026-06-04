@@ -45,7 +45,7 @@ def main(cfg: DictConfig):
         name="wm",
         project= cfg.logging_params.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
-        mode="disabled",
+        mode="offline",
     )
     print("after init", flush=True)
 
