@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --account=project_2009050
-#SBATCH --job-name=single_vqvae
+#SBATCH --job-name=wm_train
 #SBATCH --partition=gpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=50G
+#SBATCH --mem=64G
 #SBATCH --time=48:00:00
 #SBATCH --gres=gpu:v100:1
 #SBATCH --output=./logs/out_%j_%x_%N.log  # includes time stamp (t), job ID(j), job name (x), and node name (N)
