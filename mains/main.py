@@ -68,7 +68,9 @@ def main(cfg: DictConfig):
     wandb.init( 
         name="wm",
         project= cfg.logging_params.project_name,
-        config=OmegaConf.to_container(cfg, resolve=True),
+        config = {
+            "seed": cfg.exp_params.manual_seed,}
+        # config=OmegaConf.to_container(cfg, resolve=True),
     )
     print("Weights & Biases Initialized Successfully!", flush=True)
     # --- 4. Setup Data Components ---
