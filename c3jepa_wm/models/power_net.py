@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #6eba737e
+# %% ../../nbs/02b_models.powernet.ipynb #032095ed
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -13,7 +13,7 @@ from einops import rearrange
 
 from ..utils import channel
 
-# %% ../../nbs/02b_models.powernet.ipynb #c1ede7ba
+# %% ../../nbs/02b_models.powernet.ipynb #3664f7e5
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -45,7 +45,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #9f973384
+# %% ../../nbs/02b_models.powernet.ipynb #5fa6c85a
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -121,7 +121,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #71a1ee34
+# %% ../../nbs/02b_models.powernet.ipynb #468f8334
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -227,7 +227,7 @@ class PowerNet(nn.Module):
     #     return tx_loss
     
 
-    def loss_fn(self, model, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, 
+    def loss_fn(self, model, B, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, 
             schedule, power, csi_flat, pred_loss, lambda_value, lambda_pow, lambda_send, device):
         with torch.no_grad():
             # Baseline: prediction with no message
@@ -262,6 +262,10 @@ class PowerNet(nn.Module):
             "reward_term_loss": reward_term,
             "power_term_loss": power_term,
             "sparsity_term_loss": sparsity_term,
-            "tx_loss": tx_loss
+            "tx_loss": tx_loss,
+            "base_line_loss": baseline_loss,
+            "comm_gain": comm_gain,
+            "schedule_mean": s_mean,
+            "power_mean": p_mean
         }
     
