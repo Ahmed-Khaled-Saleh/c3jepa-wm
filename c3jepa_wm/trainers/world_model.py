@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #07884e77
+# %% ../../nbs/05c_trainers.control.ipynb #79cd59e2
 import math
 import torch
 import os
@@ -15,7 +15,7 @@ import wandb
 import hydra
 from pathlib import Path
 from fastcore.utils import patch
-
+from loguru import logger
 from omegaconf import DictConfig
 from einops import rearrange
 import torch.nn.functional as F
@@ -23,7 +23,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #8d794468
+# %% ../../nbs/05c_trainers.control.ipynb #08b80d1c
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -41,7 +41,7 @@ class TrainerScheduler:
         self.power_scheduler.step(power_val_loss)
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #58fb23f3
+# %% ../../nbs/05c_trainers.control.ipynb #6d7d0e08
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -86,7 +86,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #ef4346ca
+# %% ../../nbs/05c_trainers.control.ipynb #2743be12
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -175,9 +175,11 @@ class WMTrainer(BaseTrainer):
             )  # (B*T, N, D)
 
             # 2. PowerNet: schedule and power decisions
+            logger.info(f"PowerNet input msg_indices shape: {msg_indices.shape}, csi_flat shape: {csi_flat.shape}")
             schedule, power = self.power_net(msg_indices, csi_flat)  # (B*T, N, 1)
 
             # 3. Channel
+            logger.info(f"Channel input schedule shape: {schedule.shape}, power shape: {power.shape}, msg_indices shape: {msg_indices.shape}, csi_flat shape: {csi_flat.shape}")
             received_msg = channel(
                 schedule, power, msg_indices, csi_flat, device=self.device
             )  # (B*T, 49)
@@ -187,6 +189,7 @@ class WMTrainer(BaseTrainer):
             )  # (B, T, 49)
 
             # 4. Encode receiver observations
+            logger.info(f"Encoding receiver observations with shape {batch['pixels'].shape}")
             output = self.model.encode(batch)
             emb = output["emb"]                          # (B, T+1, D)
             act_emb = output["act_emb"].reshape(B, T, -1)  # (B, T, act_emb_dim)
@@ -198,6 +201,7 @@ class WMTrainer(BaseTrainer):
             tgt_emb = emb[:, self.num_preds:]            # (B, T, D)
 
             # 6. Predict
+            logger.info(f"Predicting from world model with context emb shape {ctx_emb.shape}, action emb shape {ctx_act.shape}, and msg shape {ctx_msg.shape}")
             pred_emb = self.model.predict(ctx_emb, ctx_act, ctx_msg)  # (B, T, D)
 
             # 7. JEPA loss
@@ -212,12 +216,14 @@ class WMTrainer(BaseTrainer):
             for k, v in power_loss.items():
                 output[k] = v
 
-            msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49, b=B, t=T)   # (B, T, 49)
-            ctx_msg = msg_indices[:, :T] # (B, ctx_len, msg_dim)
-            pred_emb_perfect_msg = self.model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
-            perfect_loss = (pred_emb_perfect_msg - tgt_emb).pow(2).mean()
-            quality = perfect_loss - output["pred_loss"]
-
+            with torch.no_grad():
+                logger.info(f"Computing perfect communication loss for quality metric.")
+                msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49, b=B, t=T)   # (B, T, 49)
+                ctx_msg = msg_indices[:, :T] # (B, ctx_len, msg_dim)
+                pred_emb_perfect_msg = self.model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
+                perfect_loss = (pred_emb_perfect_msg - tgt_emb).pow(2).mean()
+                quality = perfect_loss - output["pred_loss"]
+        
             loss_dict = {k: v for k, v in output.items() if "loss" in k}
             loss_dict["quality"] = quality
             wandb.log({f"train_{k}": v.item() for k, v in loss_dict.items()})
@@ -234,6 +240,7 @@ class WMTrainer(BaseTrainer):
             torch.nn.utils.clip_grad_norm_(self.power_net.parameters(), max_norm=1.0)
             self.wm_optimizer.step()
             self.power_optimizer.step()
+            logger.info(f"Completed batch {batch_idx+1}/{len(self.train_loader)} for epoch {epoch} with JEPA loss {output['jepa_loss'].item():.4f} and Power loss {output['tx_loss'].item():.4f}")
 
         avg_loss_jepa = total_loss_jepa / len(self.train_loader)
         avg_loss_power = total_loss_power / len(self.train_loader)
@@ -298,7 +305,7 @@ class WMTrainer(BaseTrainer):
         return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #167c1479
+# %% ../../nbs/05c_trainers.control.ipynb #7aa59765
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {
