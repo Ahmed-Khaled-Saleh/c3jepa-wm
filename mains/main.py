@@ -68,7 +68,7 @@ def main(cfg: DictConfig):
 
     # --- 6. Initialize Training Manager Class ---
     # (Reuses the single-GPU VQVAETrainer class created previously)
-    trainer = init_trainer(cfg, data_module, model, device)
+    trainer = init_trainer(cfg, data_module, model, device, slurm_jobid)
     print("Trainer Initialized Successfully!", flush=True)
 
     # --- 7. Execution Loop ---

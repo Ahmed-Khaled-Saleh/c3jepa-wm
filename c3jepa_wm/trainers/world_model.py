@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #79cd59e2
+# %% ../../nbs/05c_trainers.control.ipynb #62f4bae3
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #08b80d1c
+# %% ../../nbs/05c_trainers.control.ipynb #9be56856
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -41,7 +41,7 @@ class TrainerScheduler:
         self.power_scheduler.step(power_val_loss)
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #6d7d0e08
+# %% ../../nbs/05c_trainers.control.ipynb #5091dd06
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -86,13 +86,14 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #2743be12
+# %% ../../nbs/05c_trainers.control.ipynb #8c85d617
 class WMTrainer(BaseTrainer):
-    def __init__(self, data_module, model, device, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
+    def __init__(self, data_module, model, device, slurm_jobid, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
             data_module= data_module,
             device= device, 
             wm_lr= wm_lr,
+            slurm_jobid= slurm_jobid,
             power_lr= power_lr,
             **kwargs)
         
@@ -305,7 +306,7 @@ class WMTrainer(BaseTrainer):
         return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #7aa59765
+# %% ../../nbs/05c_trainers.control.ipynb #22b5dfb3
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {
