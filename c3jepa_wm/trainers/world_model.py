@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #62f4bae3
+# %% ../../nbs/05c_trainers.control.ipynb #9dbc0099
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #9be56856
+# %% ../../nbs/05c_trainers.control.ipynb #4a1f3047
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -41,7 +41,7 @@ class TrainerScheduler:
         self.power_scheduler.step(power_val_loss)
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #5091dd06
+# %% ../../nbs/05c_trainers.control.ipynb #5b5694df
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -86,7 +86,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.control.ipynb #8c85d617
+# %% ../../nbs/05c_trainers.control.ipynb #75a71f3d
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -211,7 +211,7 @@ class WMTrainer(BaseTrainer):
             # 8. TX loss (uses pred_loss so compute before backward)
             power_loss = self.power_net.loss_fn(
                 self.model, T, ctx_emb, ctx_act,
-                msg_indices, tgt_emb, schedule, power,
+                msg_indices, tgt_emb, schedule, power, csi_flat,
                 output["pred_loss"], self.lambda_value, self.lambda_pow, self.lambda_send
             )
             for k, v in power_loss.items():
@@ -306,7 +306,7 @@ class WMTrainer(BaseTrainer):
         return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #22b5dfb3
+# %% ../../nbs/05c_trainers.control.ipynb #72206902
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {

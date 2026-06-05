@@ -5,13 +5,15 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #e73dfc14
+# %% ../../nbs/02b_models.powernet.ipynb #68102a96
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
-# %% ../../nbs/02b_models.powernet.ipynb #92a795c9
+from ..utils import channel
+
+# %% ../../nbs/02b_models.powernet.ipynb #b7f8c5a7
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -43,7 +45,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #7fa4660b
+# %% ../../nbs/02b_models.powernet.ipynb #b40c976c
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -119,7 +121,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #0036a0e5
+# %% ../../nbs/02b_models.powernet.ipynb #576401ae
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -226,15 +228,22 @@ class PowerNet(nn.Module):
     
 
     def loss_fn(self, model, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, 
-            schedule, power, pred_loss, lambda_value, lambda_pow, lambda_send):
+            schedule, power, csi_flat, pred_loss, lambda_value, lambda_pow, lambda_send):
         with torch.no_grad():
             # Baseline: prediction with no message
-            pred_emb_no_msg = model.predict(ctx_emb, ctx_act, None)
+            received_msg = channel(
+                schedule, power, msg_indices, csi_flat, device=self.device
+            )  # (B*T, 49)
+            received_msg = rearrange(
+                received_msg, "(b t) msg_dim -> b t msg_dim", b=B, t=ctx_len
+            )  # (B, T, 49)
+            ctx_msg = received_msg[:, :ctx_len]                # (B, T, 49) — raw indices, embedded inside predictor
+            
+            pred_emb_no_msg = model.predict(ctx_emb, ctx_act, ctx_msg)
             baseline_loss = (pred_emb_no_msg - tgt_emb).pow(2).mean()
-
-        # How much did transmitting actually help?
-        # Positive = transmission helped, Negative = transmission hurt
-        comm_gain = baseline_loss - pred_loss  # scalar
+            # How much did transmitting actually help?
+            # Positive = transmission helped, Negative = transmission hurt
+            comm_gain = baseline_loss - pred_loss  # scalar
 
         s_mean = schedule.mean()   # (0,1) — how often we transmit
         p_mean = power.mean()      # (0, P_max) — average power used
