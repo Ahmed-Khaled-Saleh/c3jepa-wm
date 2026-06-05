@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet']
 
-# %% ../../nbs/02b_models.powernet.ipynb #68102a96
+# %% ../../nbs/02b_models.powernet.ipynb #f3d3f6d4
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -13,7 +13,7 @@ from einops import rearrange
 
 from ..utils import channel
 
-# %% ../../nbs/02b_models.powernet.ipynb #b7f8c5a7
+# %% ../../nbs/02b_models.powernet.ipynb #f66075fa
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -45,7 +45,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #b40c976c
+# %% ../../nbs/02b_models.powernet.ipynb #0c89c9cf
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -121,7 +121,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #576401ae
+# %% ../../nbs/02b_models.powernet.ipynb #7075419b
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -232,7 +232,7 @@ class PowerNet(nn.Module):
         with torch.no_grad():
             # Baseline: prediction with no message
             received_msg = channel(
-                schedule, power, msg_indices, csi_flat, device=self.device
+                schedule, power, msg_indices, csi_flat, device=self.device, no_comm=True
             )  # (B*T, 49)
             received_msg = rearrange(
                 received_msg, "(b t) msg_dim -> b t msg_dim", b=B, t=ctx_len

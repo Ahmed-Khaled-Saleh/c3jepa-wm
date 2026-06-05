@@ -34,10 +34,10 @@ trainer:
   history_size: ${pipeline.history_size} # Automatically grabs 3
   num_preds: 1
   lambda_sigreg: 0.1
-  lambda_pow: 0.1
-  lambda_value: 0.1
+  lambda_pow: 5.0
+  lambda_value: 1.0
   lambda_quality: 0.1
-  lambda_send: 0.1
+  lambda_send: 0.01
 
 
 optimizer:
