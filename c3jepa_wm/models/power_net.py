@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet', 'PowerCritic']
 
-# %% ../../nbs/02b_models.powernet.ipynb #19eecfc5
+# %% ../../nbs/02b_models.powernet.ipynb #1e402328
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -14,7 +14,7 @@ from torch.distributions import Bernoulli, Normal
 
 from ..utils import channel
 
-# %% ../../nbs/02b_models.powernet.ipynb #65ad4700
+# %% ../../nbs/02b_models.powernet.ipynb #f4e5190c
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -46,7 +46,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #2102a688
+# %% ../../nbs/02b_models.powernet.ipynb #0c591caf
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -122,7 +122,7 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #f6ee4fd6
+# %% ../../nbs/02b_models.powernet.ipynb #5d86c8f0
 import math
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
@@ -314,7 +314,7 @@ class PowerNet(nn.Module):
         return tx_loss, critic_loss, actor_loss
 
 
-# %% ../../nbs/02b_models.powernet.ipynb #12e1ecd9
+# %% ../../nbs/02b_models.powernet.ipynb #82abe6af
 class PowerCritic(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, nhead=4, num_layers=2):
         super().__init__()
