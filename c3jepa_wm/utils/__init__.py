@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer', 'channel', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #7dbcc277
+# %% ../../nbs/06a_utils.__init__.ipynb #84471cc7
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #ff1f8586
+# %% ../../nbs/06a_utils.__init__.ipynb #8776d6c1
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -17,14 +17,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #b2cc3d0c
+# %% ../../nbs/06a_utils.__init__.ipynb #9cf23fa2
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #6a7ae880
+# %% ../../nbs/06a_utils.__init__.ipynb #080d6604
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -66,7 +66,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #71008740
+# %% ../../nbs/06a_utils.__init__.ipynb #cb17ebda
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -80,7 +80,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #d4a5fd35
+# %% ../../nbs/06a_utils.__init__.ipynb #6498476a
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -163,7 +163,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #ae73a415
+# %% ../../nbs/06a_utils.__init__.ipynb #238fffa3
 class PhaseTransitionChecker:
     def __init__(
         self,
