@@ -72,11 +72,12 @@ def main(cfg: DictConfig):
     print("Trainer Initialized Successfully!", flush=True)
 
     # --- 7. Execution Loop ---
-    for epoch in range(1, cfg.pipeline.max_epochs + 1):
-        train_loss = trainer.train_epoch(epoch)
-        val_loss = trainer.validate_epoch(epoch)
-        trainer.scheduler.step(val_loss)
-        trainer.checkpoint(epoch, val_loss)
+    trainer.fit(cfg)
+    # for epoch in range(1, cfg.pipeline.max_epochs + 1):
+    #     train_loss = trainer.train_epoch(epoch)
+    #     val_loss = trainer.validate_epoch(epoch)
+    #     trainer.scheduler.step(val_loss)
+    #     trainer.checkpoint(epoch, val_loss)
 
     wandb.finish()
     # logger.finish()

@@ -4,6 +4,7 @@ defaults:
   - /model@model.vqvae: vqvae
   - /model@model.power_net: power_net
   - /model@model.jepa: control_jepa
+  - /model@model.critic: critic
   - _self_
 
 stage: 2

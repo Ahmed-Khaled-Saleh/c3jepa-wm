@@ -1,0 +1,9 @@
+# configs/model/critic.yaml
+_target_: c3jepa_wm.models.power_net.PowerCritic # Full absolute python import path
+
+csi_dim: 1
+embedding_dim: ${pipeline.msg_embedding_dim}
+num_embeddings: ${pipeline.num_embeddings}
+nhead: 4
+num_layers: 2
+
