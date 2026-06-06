@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule', 'WMDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #6ea6179f
+# %% ../../nbs/01c_data.data_module.ipynb #1d8deede
 import os
 
 import numpy as np
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset, MultiAgentWorldModelDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #c361e123
+# %% ../../nbs/01c_data.data_module.ipynb #b22bd5e8
 class DataModule:
     def __init__(self,
                  data_dir: str, 
@@ -102,7 +102,7 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #8e559ce3
+# %% ../../nbs/01c_data.data_module.ipynb #e34fc85a
 class VQDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -126,7 +126,7 @@ class VQDataModule(DataModule):
     
 
 
-# %% ../../nbs/01c_data.data_module.ipynb #f65a1def
+# %% ../../nbs/01c_data.data_module.ipynb #9876cf41
 class WMDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
