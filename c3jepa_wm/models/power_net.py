@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['PowerNetMLP', 'PowerNetMasked', 'PowerNet', 'PowerCritic']
 
-# %% ../../nbs/02b_models.powernet.ipynb #1e402328
+# %% ../../nbs/02b_models.powernet.ipynb #2623c002
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -14,7 +14,7 @@ from torch.distributions import Bernoulli, Normal
 
 from ..utils import channel
 
-# %% ../../nbs/02b_models.powernet.ipynb #f4e5190c
+# %% ../../nbs/02b_models.powernet.ipynb #bf71d547
 class PowerNetMLP(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power):
         super().__init__()
@@ -46,7 +46,7 @@ class PowerNetMLP(nn.Module):
         
         return schedule, power
 
-# %% ../../nbs/02b_models.powernet.ipynb #0c591caf
+# %% ../../nbs/02b_models.powernet.ipynb #4bcbcd0f
 class PowerNetMasked(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
                  nhead=4, num_layers=2):
@@ -122,13 +122,16 @@ class PowerNetMasked(nn.Module):
         return schedule, power
     
 
-# %% ../../nbs/02b_models.powernet.ipynb #5d86c8f0
+# %% ../../nbs/02b_models.powernet.ipynb #bc9caaf0
 import math
 class PowerNet(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, max_power,
-                 nhead=4, num_layers=2):
+                 nhead=4, num_layers=2, lambda_pow=0.01, lambda_entropy=0.05, lambda_critic=0.05):
         super().__init__()
         self.max_power = max_power
+        self.lambda_pow = lambda_pow
+        self.lambda_entropy = lambda_entropy
+        self.lambda_critic = lambda_critic
         self.embedding_dim = embedding_dim
 
         self.msg_embedding = nn.Embedding(num_embeddings, embedding_dim)
@@ -215,56 +218,6 @@ class PowerNet(nn.Module):
 
         return schedule, power
 
-    # def loss_fn(self, model, B, ctx_len, ctx_emb, ctx_act, msg_indices, tgt_emb, 
-    #         schedule, power, csi_flat, pred_loss, lambda_value, lambda_pow, lambda_send, device):
-    #     with torch.no_grad():
-    #         # Baseline: prediction with no message
-    #         received_msg = channel(
-    #             schedule, power, msg_indices, csi_flat, device=device, no_comm=True
-    #         )  # (B*T, 49)
-    #         received_msg = rearrange(
-    #             received_msg, "(b t) msg_dim -> b t msg_dim", b=B, t=ctx_len
-    #         )  # (B, T, 49)
-    #         ctx_msg = received_msg[:, :ctx_len]                # (B, T, 49) — raw indices, embedded inside predictor
-            
-    #         pred_emb_no_msg = model.predict(ctx_emb, ctx_act, ctx_msg)
-    #         baseline_loss = (pred_emb_no_msg.detach() - tgt_emb).pow(2).mean()
-    #         # How much did transmitting actually help?
-    #         # Positive = transmission helped, Negative = transmission hurt
-    #         comm_gain = baseline_loss - pred_loss  # scalar
-
-    #         # logger.info(f"Computing perfect communication loss for quality metric.")
-    #         msg_indices = rearrange(msg_indices, "(b t) msg_dim -> b t msg_dim", msg_dim=49, b=B, t=ctx_len)   # (B, T, 49)
-    #         ctx_msg = msg_indices[:, :ctx_len] # (B, ctx_len, msg_dim)
-    #         pred_emb_perfect_msg = self.model.predict(ctx_emb, ctx_act, ctx_msg) # pred with perfect comm.
-    #         perfect_loss = (pred_emb_perfect_msg.detach() - tgt_emb).pow(2).mean()
-    #         quality = perfect_loss - pred_loss
-
-    #     s_mean = schedule.mean()   # (0,1) — how often we transmit
-    #     p_mean = power.mean()      # (0, P_max) — average power used
-
-    #     # 1. Reward scheduling when communication improves prediction
-    #     reward_term = -lambda_value * comm_gain * s_mean
-
-    #     # 2. Penalize power consumption (only when transmitting)
-    #     power_term = lambda_pow * p_mean * s_mean
-
-    #     # 3. Sparsity: penalize transmitting at all (encourages selective sending)
-    #     sparsity_term = lambda_send * s_mean
-
-    #     tx_loss = reward_term + power_term + sparsity_term
-    #     return {
-    #         "reward_term_loss": reward_term,
-    #         "power_term_loss": power_term,
-    #         "sparsity_term_loss": sparsity_term,
-    #         "tx_loss": tx_loss,
-    #         "base_line_loss": baseline_loss,
-    #         "comm_gain": comm_gain,
-    #         "schedule_mean": s_mean,
-    #         "power_mean": p_mean,
-    #         "quality": quality
-    #     }
-    
     def loss_fn(self, critic, reward, msg_indices, csi, schedule, power):
         """
         schedule: (B*T, N, 1) — sigmoid probabilities from PowerNet
@@ -314,7 +267,7 @@ class PowerNet(nn.Module):
         return tx_loss, critic_loss, actor_loss
 
 
-# %% ../../nbs/02b_models.powernet.ipynb #82abe6af
+# %% ../../nbs/02b_models.powernet.ipynb #ad6bc53e
 class PowerCritic(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, csi_dim, nhead=4, num_layers=2):
         super().__init__()

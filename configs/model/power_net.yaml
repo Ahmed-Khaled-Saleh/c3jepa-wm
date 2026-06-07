@@ -7,4 +7,6 @@ num_embeddings: ${pipeline.num_embeddings}
 max_power: 10
 nhead: 4
 num_layers: 2
-
+lambda_pow: 0.01
+lambda_entropy: 0.05
+lambda_critic: 0.1
