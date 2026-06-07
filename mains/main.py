@@ -9,9 +9,6 @@ import wandb
 from dotenv import load_dotenv
 
 from c3jepa_wm.utils import init_data, init_model, init_trainer
-
-
-from c3jepa_wm.utils import init_data, init_model, init_trainer
 # from c3jepa_wm.loggers.base import SlurmSafeLogger
 
 def seed_everything(seed: int):
@@ -46,14 +43,6 @@ def main(cfg: DictConfig):
         # mode="offline",
         # settings=wandb.Settings(start_method="thread")
     )
-
-    # logger = SlurmSafeLogger(
-    #     log_dir=cfg.logging_params.save_dir,
-    #     use_wandb=True,
-    #     wandb_project=cfg.logging_params.project_name,
-    #     wandb_name="wm",
-    #     wandb_config=OmegaConf.to_container(cfg, resolve=True)
-    # )
 
     print("Weights & Biases Initialized Successfully!", flush=True)
     # --- 4. Setup Data Components ---
