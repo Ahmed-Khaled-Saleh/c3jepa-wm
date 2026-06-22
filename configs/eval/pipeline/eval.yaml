@@ -29,13 +29,13 @@ model:
 evaluator:
   _target_: c3jepa_wm.evaluators.control.MultiAgentGoalEvaluator
   history_size: ${pipeline.history_size} # Automatically grabs 3
-  goal_offset: 25
+  goal_offset: 10
   SNR: 10.0
   p_max: 10
   noise_power: 0.001
 
 planner: 
-  __target__: c3jepa_wm.planners.mpc.JEPAGoalPlanner
+  _target_: c3jepa_wm.planners.mpc.JEPAGoalPlanner
   action_dim: 1
   
 

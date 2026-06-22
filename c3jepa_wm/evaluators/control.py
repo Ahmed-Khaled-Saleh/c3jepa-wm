@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #e9ecaac2
+# %% ../../nbs/07_evaluators.control.ipynb #c3c1277e
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ from einops import rearrange
 import hydra
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #f2105540
+# %% ../../nbs/07_evaluators.control.ipynb #82327f81
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -55,7 +55,7 @@ class MultiAgentGoalEvaluator:
         assert len(agents) == 2, "This evaluator only supports exactly 2 agents."
         self.data_module = data_module
         self.data_module.setup()
-        
+
         self.model = model['jepa'].to(device).eval()
         self.vqvae = model['vqvae'].to(device).eval()
         self.agents = list(agents)
@@ -76,19 +76,20 @@ class MultiAgentGoalEvaluator:
     @torch.no_grad()
     def _encode_message(self, partner_pixels_vqvae_t0, csi_t0, schedule=None, power=None, no_comm=False):
         """
-        partner_pixels_vqvae_t0: (1, C, H, W) -- partner's obs at t0, VQ-VAE-transform space
+        partner_pixels_vqvae_t0: (B, C, H, W) -- partner's obs at t0, VQ-VAE-transform space
         csi_t0: (1,) complex -- channel state at t0 for this sender->receiver link
         schedule, power: scalars or (1,) tensors, or None to skip channel entirely
         """
         partner_pixels_vqvae_t0 = partner_pixels_vqvae_t0.to(self.device)
-        indices = self.vqvae.get_message_indices(partner_pixels_vqvae_t0)  # (1, H, W)
-        indices = rearrange(indices, "B H W -> B (H W)").long() # (1, 49)
+        indices = self.vqvae.get_message_indices(partner_pixels_vqvae_t0)  # (B, 1, H, W)
+        indices = rearrange(indices, "B H W -> B (H W)").long() # (B, 49)
 
         if schedule is not None and power is not None:
             n = 1  # single neighbor (the other agent)
-            csi = csi_t0.reshape(1, n, 1).to(self.device)              # (B*T=1, n, 1) complex
-            schedule = torch.as_tensor(schedule, device=self.device).reshape(1, n, 1)
-            power = torch.as_tensor(power, device=self.device).reshape(1, n, 1)
+            print(csi_t0.shape, schedule.shape, power.shape)
+            csi = csi_t0 #csi_t0.reshape(1, n, 1).to(self.device)              # (B*T=1, n, 1) complex
+            schedule = torch.as_tensor(schedule, device=self.device)#.reshape(1, n, 1)
+            power = torch.as_tensor(power, device=self.device)#.reshape(1, n, 1)
 
             indices = channel(
                 schedule=schedule,
@@ -102,7 +103,6 @@ class MultiAgentGoalEvaluator:
 
         return indices.unsqueeze(1)  # (1, 1, 49) -- matches msg_indices shape expected downstream
         
-
     def _extract_power_and_schedule(self, csi):
         snr_linear = 10 ** (self.SNR / 10.0)
         optimal_power = snr_linear * self.noise_power / (torch.abs(csi) ** 2 + 1e-8)
@@ -111,12 +111,12 @@ class MultiAgentGoalEvaluator:
         
     def _build_agent_info(self, episode, agent, partner, t0):
         H = self.history_size
-        pixels = episode[agent]["pixels"][t0 - H + 1 : t0 + 1]
-        actions = episode[agent]["action"][t0 - H + 1 : t0 + 1]
-        goal_pixels = episode[agent]["pixels"][t0 + self.goal_offset]
+        pixels = episode[agent]["pixels"][:, t0 - H + 1 : t0 + 1]
+        actions = episode[agent]["action"][:, t0 - H + 1 : t0 + 1]
+        goal_pixels = episode[agent]["pixels"][:, t0 + self.goal_offset]
 
-        partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][t0].unsqueeze(0)
-        csi_t0 = episode[partner]["csi"][t0].unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
+        partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][:, t0]#.unsqueeze(0)
+        csi_t0 = episode[partner]["csi"][:, t0]#.unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
         power_level, schedule = self._extract_power_and_schedule(csi_t0)
         msg_indices = self._encode_message(
             partner_obs_vqvae_t0, csi_t0, schedule= schedule, power= power_level
@@ -139,10 +139,11 @@ class MultiAgentGoalEvaluator:
         Returns per-agent dict with planned actions, ground-truth actions, and goal error.
         """
         H = self.history_size
-        T = episode[self.agents[0]]["pixels"].size(0)
-
+        T = episode[self.agents[0]]["pixels"].size(1)
+        # print(episode[self.agents[0]]["pixels"].shape)
         lo = H - 1
         hi = T - self.goal_offset - 1
+        print(H, T, lo, hi)
         assert hi >= lo, "Episode too short for given history_size/goal_offset."
         if t0 is None:
             t0 = torch.randint(lo, hi + 1, (1,)).item()
