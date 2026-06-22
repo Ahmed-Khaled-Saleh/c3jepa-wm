@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #e0cc0f7d
+# %% ../../nbs/07_evaluators.control.ipynb #41945be8
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ from einops import rearrange
 import hydra
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #c53c5c15
+# %% ../../nbs/07_evaluators.control.ipynb #30a36add
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -43,6 +43,7 @@ class MultiAgentGoalEvaluator:
         data_module,
         model,
         planner_cfg,
+        slurm_jobid= None,
         history_size=3,
         goal_offset=10,
         agents=("agent_0", "agent_1"),
