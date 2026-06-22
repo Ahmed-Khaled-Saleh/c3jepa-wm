@@ -60,7 +60,7 @@ def main(cfg: DictConfig):
     print("Evaluator Initialized Successfully!", flush=True)
 
     # --- 7. Execution Loop ---
-    evaluator.evaluate_dataset(data_module)
+    evaluator.evaluate_dataset()
     
     wandb.finish()
     # logger.finish()
