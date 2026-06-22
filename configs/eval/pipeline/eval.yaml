@@ -1,0 +1,29 @@
+# configs/pipeline/wm_train.yaml
+defaults:
+  - /datamodule: jepa_data
+  - /model@model.vqvae: vqvae
+  - /model@model.jepa: control_jepa
+  - _self_
+
+stage: 3
+
+# Define Stage 2 specific hyperparameters here
+lr: 1e-4
+wm_lr: 1e-4
+power_lr: 3e-4
+max_epochs: 100
+num_workers: 6
+train_split: 0.9
+seed: 3072
+img_size: 224
+embed_dim: 192
+msg_embedding_dim: 256
+num_embeddings: 256
+history_size: 3
+
+model:
+  vqvae:
+    checkpoint_path: "/scratch/project_2009050/expirements/findgoal/checkpoints/vqvae_pretraining/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt" #"" #"${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
+
+
+  

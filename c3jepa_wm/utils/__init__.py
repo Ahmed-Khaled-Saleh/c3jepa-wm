@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer', 'channel', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #6e652b1e
+# %% ../../nbs/06a_utils.__init__.ipynb #e8c73ac7
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #ccf5b907
+# %% ../../nbs/06a_utils.__init__.ipynb #0f81398a
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -17,14 +17,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #69d54221
+# %% ../../nbs/06a_utils.__init__.ipynb #f14a0e76
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #87313623
+# %% ../../nbs/06a_utils.__init__.ipynb #40c7f16f
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -61,12 +61,35 @@ def init_model(cfg: DictConfig):
         models["vqvae"] = vqvae
         return models
     
+
+    elif stage == 3: # Evaluation stage
+        # Stage 2: Instantiate all three models independently
+        models = {
+            "jepa": hydra.utils.instantiate(model_cfg.jepa),
+        }
+        
+        # Instantiate VQ-VAE, then immediately load its pretrained weights and freeze it
+        vqvae = hydra.utils.instantiate(model_cfg.vqvae)
+        
+        if hasattr(model_cfg.vqvae, "checkpoint_path") and model_cfg.vqvae.checkpoint_path:
+            print(f"Loading pretrained VQ-VAE weights from {model_cfg.vqvae.checkpoint_path}")
+            checkpoint = torch.load(model_cfg.vqvae.checkpoint_path, map_location="cpu")
+            vqvae.load_state_dict(checkpoint["model_state_dict"]) 
+            
+        # Freeze VQ-VAE because it's only used for getting latent codebooks
+        vqvae.eval()
+        for param in vqvae.parameters():
+            param.requires_grad = False
+            
+        models["vqvae"] = vqvae
+        return models
+    
     else:
         raise ValueError(f"Unknown pipeline stage: {stage}")
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f7d6632a
+# %% ../../nbs/06a_utils.__init__.ipynb #3abd93af
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -80,7 +103,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #541d14cd
+# %% ../../nbs/06a_utils.__init__.ipynb #ea5b515a
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -163,7 +186,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #a86a4569
+# %% ../../nbs/06a_utils.__init__.ipynb #b2293df8
 class PhaseTransitionChecker:
     def __init__(
         self,

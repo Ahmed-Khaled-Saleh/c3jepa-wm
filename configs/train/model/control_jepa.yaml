@@ -1,0 +1,48 @@
+_target_: c3jepa_wm.models.jepa.JEPA
+
+encoder:
+  _target_: stable_pretraining.backbone.utils.vit_hf
+  size: tiny
+  patch_size: 14
+  image_size: ${pipeline.img_size}
+  pretrained: false
+  use_mask_token: false
+
+predictor:
+  _target_: c3jepa_wm.models.jepa.ARPredictor
+  num_frames: ${pipeline.history_size}
+  input_dim: ${pipeline.embed_dim}
+  hidden_dim: ${pipeline.embed_dim}
+  output_dim: ${pipeline.embed_dim}
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+  msg_embedding_dim: ${pipeline.msg_embedding_dim}
+  num_embeddings: ${pipeline.num_embeddings}
+
+action_encoder:
+  _target_: c3jepa_wm.models.jepa.DiscreteActionEncoder
+  # input_dim: ???
+  num_actions: 4
+  action_emb_dim: ${pipeline.embed_dim}
+
+projector:
+  _target_: c3jepa_wm.models.jepa.MLP
+  input_dim: ${pipeline.embed_dim}
+  output_dim: ${pipeline.embed_dim}
+  hidden_dim: 2048
+  norm_fn:
+    _target_: torch.nn.BatchNorm1d
+    _partial_: true
+
+pred_proj:
+  _target_: c3jepa_wm.models.jepa.MLP
+  input_dim: ${pipeline.embed_dim}
+  output_dim: ${pipeline.embed_dim}
+  hidden_dim: 2048
+  norm_fn:
+    _target_: torch.nn.BatchNorm1d
+    _partial_: true

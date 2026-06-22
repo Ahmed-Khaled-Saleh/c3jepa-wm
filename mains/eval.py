@@ -9,7 +9,6 @@ import wandb
 from dotenv import load_dotenv
 
 from c3jepa_wm.utils import init_data, init_model, init_trainer
-# from c3jepa_wm.loggers.base import SlurmSafeLogger
 
 def seed_everything(seed: int):
     random.seed(seed)
@@ -20,7 +19,7 @@ def seed_everything(seed: int):
 
 
 # 1. Point hydra to your configuration folder and master file
-@hydra.main(version_base=None, config_path="../configs/train/", config_name="config")
+@hydra.main(version_base=None, config_path="../configs/eval/", config_name="config")
 def main(cfg: DictConfig):
     # Optional: print config block in terminal to confirm changes at runtime
     print(OmegaConf.to_yaml(cfg, resolve=True), flush=True)
@@ -62,12 +61,7 @@ def main(cfg: DictConfig):
 
     # --- 7. Execution Loop ---
     trainer.fit(cfg)
-    # for epoch in range(1, cfg.pipeline.max_epochs + 1):
-    #     train_loss = trainer.train_epoch(epoch)
-    #     val_loss = trainer.validate_epoch(epoch)
-    #     trainer.scheduler.step(val_loss)
-    #     trainer.checkpoint(epoch, val_loss)
-
+    
     wandb.finish()
     # logger.finish()
 
