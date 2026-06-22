@@ -6,13 +6,13 @@
 __all__ = ['LOG_FORMAT', 'DATE_FORMAT', 'SlurmSafeLogger', 'gpu_timer', 'get_logger', 'CSVLogger', 'AverageMeter',
            'jepa_rootpath', 'git_information']
 
-# %% ../../nbs/08a_logger.base.ipynb #55b6bbcf
+# %% ../../nbs/08a_logger.base.ipynb #0d626017
 import json
 import time
 from pathlib import Path
 
 
-# %% ../../nbs/08a_logger.base.ipynb #d2627c69
+# %% ../../nbs/08a_logger.base.ipynb #d7e3e7bc
 class SlurmSafeLogger:
     def __init__(
         self,
@@ -75,7 +75,7 @@ class SlurmSafeLogger:
             except Exception:
                 pass
 
-# %% ../../nbs/08a_logger.base.ipynb #0530f07a
+# %% ../../nbs/08a_logger.base.ipynb #5f577da6
 import logging
 import os
 import subprocess
@@ -104,7 +104,7 @@ def gpu_timer(closure, log_timings=True):
     return result, elapsed_time
 
 
-# %% ../../nbs/08a_logger.base.ipynb #4d22b446
+# %% ../../nbs/08a_logger.base.ipynb #dd1cdb76
 LOG_FORMAT = "[%(levelname)-8s][%(asctime)s][%(name)-20s][%(funcName)-25s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -115,7 +115,7 @@ def get_logger(name=None, force=False):
 
 
 
-# %% ../../nbs/08a_logger.base.ipynb #9eff7ab3
+# %% ../../nbs/08a_logger.base.ipynb #c4715fa7
 class CSVLogger(object):
 
     def __init__(self, fname, *argv, **kwargs):
@@ -140,7 +140,7 @@ class CSVLogger(object):
 
 
 
-# %% ../../nbs/08a_logger.base.ipynb #943762d6
+# %% ../../nbs/08a_logger.base.ipynb #c8cbf87c
 class AverageMeter(object):
     """computes and stores the average and current value"""
 

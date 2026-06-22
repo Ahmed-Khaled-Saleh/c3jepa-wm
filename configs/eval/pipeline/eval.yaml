@@ -33,8 +33,9 @@ evaluator:
   SNR: 10.0
   p_max: 10
   noise_power: 0.001
-  planner: 
-    __target__: c3jepa_wm.planners.mpc.JEPAGoalPlanner
-    action_dim: 1
-    
+
+planner: 
+  __target__: c3jepa_wm.planners.mpc.JEPAGoalPlanner
+  action_dim: 1
+  
 
