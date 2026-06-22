@@ -80,3 +80,19 @@ class JEPAGoalPlanner:
         first_action = plan[:, 0]
         return first_action, plan
     
+    @torch.no_grad()
+    def eval_plan(self, info_dict, device, plan):
+        final_action_seq = torch.cat(
+        [info_dict["action"], F.one_hot(plan, num_classes=self.action_dim).float()],
+        dim=1,
+        ).unsqueeze(1).to(device)  # (B, 1, H+horizon, action_dim)
+
+        final_info = {
+            k: (v.unsqueeze(1).to(device) if torch.is_tensor(v) else v)
+            for k, v in info_dict.items()
+        }
+        final_cost = self.model.get_cost(final_info, final_action_seq).squeeze(1)  # (B,)
+
+        # first_action = plan[:, 0]
+        return final_cost
+        

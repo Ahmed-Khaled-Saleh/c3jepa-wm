@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #fcd7d494
+# %% ../../nbs/07_evaluators.control.ipynb #6c6211f3
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #641103ef
+# %% ../../nbs/07_evaluators.control.ipynb #1ed35c07
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -49,6 +49,7 @@ class MultiAgentGoalEvaluator:
         device="cpu",
         SNR = 10.0,  # example SNR for power/schedule extraction; in practice, this could be tuned or provided as part of the episode
         p_max = 10,  # max power level for scheduling decisions
+        noise_power=1e-3,  # noise power for SNR calculations
     ):
         assert len(agents) == 2, "This evaluator only supports exactly 2 agents."
         self.model = model.to(device).eval()
@@ -59,6 +60,7 @@ class MultiAgentGoalEvaluator:
         self.device = device
         self.SNR = SNR
         self.p_max = p_max
+        self.noise_power = noise_power
 
         # one planner per agent (mirrors the per-agent action_dim/horizon if they differ)
         self.planners = {
@@ -75,7 +77,7 @@ class MultiAgentGoalEvaluator:
         """
         partner_pixels_vqvae_t0 = partner_pixels_vqvae_t0.to(self.device)
         indices = self.vqvae.get_message_indices(partner_pixels_vqvae_t0)  # (1, H, W)
-        indices = rearrange(indices, "B H W -> B (H W)")  # (1, 49)
+        indices = rearrange(indices, "B H W -> B (H W)").long() # (1, 49)
 
         if schedule is not None and power is not None:
             n = 1  # single neighbor (the other agent)
@@ -89,17 +91,19 @@ class MultiAgentGoalEvaluator:
                 msg_indices=indices,       # (B*T, 49) -> here B*T = 1
                 csi=csi,
                 device=self.device,
+                snr_db=self.SNR,
                 no_comm=no_comm,
             )  # returns (B*T, 49) = (1, 49)
 
         return indices.unsqueeze(1)  # (1, 1, 49) -- matches msg_indices shape expected downstream
         
 
-    def _extract_power_and_schedule(self, csi, noise_power):
-        optimal_power = self.SNR * noise_power / (torch.abs(csi) ** 2 + 1e-8)
-        schedule = (optimal_power <= self.p_max).float()  # schedule decision rule: transmit if power level is below max.
+    def _extract_power_and_schedule(self, csi):
+        snr_linear = 10 ** (self.SNR / 10.0)
+        optimal_power = snr_linear * self.noise_power / (torch.abs(csi) ** 2 + 1e-8)
+        schedule = (optimal_power <= self.p_max).float()
         return optimal_power, schedule
-    
+        
     def _build_agent_info(self, episode, agent, partner, t0):
         H = self.history_size
         pixels = episode[agent]["pixels"][t0 - H + 1 : t0 + 1]
@@ -108,10 +112,9 @@ class MultiAgentGoalEvaluator:
 
         partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][t0].unsqueeze(0)
         csi_t0 = episode[partner]["csi"][t0].unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
-        noise_power = 1.0  # example noise power; in practice, this could be estimated or provided as part of the episode
-        power_level, schedule = self._extract_power_and_schedule(csi_t0, noise_power)
+        power_level, schedule = self._extract_power_and_schedule(csi_t0)
         msg_indices = self._encode_message(
-            partner_obs_vqvae_t0, csi_t0, schedule=schedule, power= power_level
+            partner_obs_vqvae_t0, csi_t0, schedule= schedule, power= power_level
         )
 
         info = {
@@ -147,7 +150,7 @@ class MultiAgentGoalEvaluator:
             first_action, plan = self.planners[agent].plan(info)
 
             gt_future_actions = episode[agent]["action"][t0 + 1 : t0 + 1 + plan.size(1)]
-            goal_err = self._goal_error(episode, agent, t0, plan)
+            goal_err = self.planners[agent].eval_plan(info, self.device, plan) #self._goal_error(episode, agent, t0, plan)
 
             results[agent] = {
                 "t0": t0,

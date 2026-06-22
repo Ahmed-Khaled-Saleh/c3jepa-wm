@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.control.ipynb #ab42f3ff
+# %% ../../nbs/05c_trainers.control.ipynb #bde59817
 import math
 import torch
 import os
@@ -24,7 +24,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel, PhaseTransitionChecker
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #180c1b48
+# %% ../../nbs/05c_trainers.control.ipynb #cb0b631e
 class TrainerScheduler:
     def __init__(self, wm_optimizer, power_optimizer, critic_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -62,7 +62,7 @@ class TrainerScheduler:
             
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #fed77639
+# %% ../../nbs/05c_trainers.control.ipynb #1fec90c4
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -193,7 +193,7 @@ class BaseTrainer:
         self._rebuild_dataloaders(phase)
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #ed31ae07
+# %% ../../nbs/05c_trainers.control.ipynb #341e5209
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr, power_lr, history_size, num_preds, lambda_sigreg, lambda_pow, lambda_value, lambda_quality, lambda_send, **kwargs):
         super().__init__(
@@ -263,7 +263,7 @@ class WMTrainer(BaseTrainer):
 
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #f8c6d676
+# %% ../../nbs/05c_trainers.control.ipynb #34bfe29d
 @patch
 def fit(self: WMTrainer, cfg: DictConfig):
     self.set_phase(1)
@@ -286,7 +286,7 @@ def fit(self: WMTrainer, cfg: DictConfig):
                 self.transition_checker.reset()
         
 
-# %% ../../nbs/05c_trainers.control.ipynb #5d8ed940
+# %% ../../nbs/05c_trainers.control.ipynb #11f54049
 @patch
 @torch.no_grad()
 def compute_rewards(self: WMTrainer, ctx_emb, ctx_act, tgt_emb, received_msg):
@@ -302,7 +302,7 @@ def compute_rewards(self: WMTrainer, ctx_emb, ctx_act, tgt_emb, received_msg):
     reward = baseline_loss - pred_loss
     return reward, pred_loss, baseline_loss
 
-# %% ../../nbs/05c_trainers.control.ipynb #45f88a38
+# %% ../../nbs/05c_trainers.control.ipynb #760b6e89
 @patch
 @torch.no_grad()
 def get_msg_indices(self: WMTrainer, sender_pov_seq):
@@ -320,7 +320,7 @@ def get_msg_indices(self: WMTrainer, sender_pov_seq):
 
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #d11016d2
+# %% ../../nbs/05c_trainers.control.ipynb #8f9e872c
 @patch
 def train_epoch(self: WMTrainer, epoch):
     self.model.train()
@@ -360,7 +360,7 @@ def train_epoch(self: WMTrainer, epoch):
     return avg_loss_jepa, avg_loss_power
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #244b5d40
+# %% ../../nbs/05c_trainers.control.ipynb #2c585b98
 @patch
 def train_epoch_phase_1(self: WMTrainer, epoch, batch, msg_indices):
     B = batch["sender_pov"].shape[0]
@@ -389,7 +389,7 @@ def train_epoch_phase_1(self: WMTrainer, epoch, batch, msg_indices):
     return output['jepa_loss'].item(), 0.0
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #54c4fadf
+# %% ../../nbs/05c_trainers.control.ipynb #8987709e
 @patch
 def train_epoch_phase_2(self: WMTrainer, epoch, batch, msg_indices):
     B = batch["sender_pov"].shape[0]
@@ -439,7 +439,7 @@ def train_epoch_phase_2(self: WMTrainer, epoch, batch, msg_indices):
     self.critic_optimizer.step()
     return 0.0, tx_loss.item()
 
-# %% ../../nbs/05c_trainers.control.ipynb #dc070ebe
+# %% ../../nbs/05c_trainers.control.ipynb #cc510f05
 @patch
 def train_epoch_phase_3(self: WMTrainer, epoch, batch, msg_indices):
     B = batch["sender_pov"].shape[0]
@@ -500,7 +500,7 @@ def train_epoch_phase_3(self: WMTrainer, epoch, batch, msg_indices):
     self.critic_optimizer.step()
     return output['jepa_loss'].item(), tx_loss.item()
 
-# %% ../../nbs/05c_trainers.control.ipynb #90d63a6d
+# %% ../../nbs/05c_trainers.control.ipynb #779237bb
 @patch
 @torch.no_grad()
 def validate_epoch(self: WMTrainer, epoch):
@@ -535,7 +535,7 @@ def validate_epoch(self: WMTrainer, epoch):
     return avg_metrics
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #73a58ba6
+# %% ../../nbs/05c_trainers.control.ipynb #0353592e
 @patch
 @torch.no_grad()
 def validate_phase_1(self: WMTrainer, batch, msg_indices):
@@ -557,7 +557,7 @@ def validate_phase_1(self: WMTrainer, batch, msg_indices):
 
     return {"val_jepa_loss": output['jepa_loss'].item()}
 
-# %% ../../nbs/05c_trainers.control.ipynb #eb84bc9f
+# %% ../../nbs/05c_trainers.control.ipynb #2f13af3f
 @patch
 @torch.no_grad()
 def validate_phase_2(self: WMTrainer, batch, msg_indices):
@@ -597,7 +597,7 @@ def validate_phase_2(self: WMTrainer, batch, msg_indices):
         "val_power_mean":    power.mean().item(),
     }
 
-# %% ../../nbs/05c_trainers.control.ipynb #3c079746
+# %% ../../nbs/05c_trainers.control.ipynb #a8c98f90
 @patch
 @torch.no_grad()
 def validate_phase_3(self: WMTrainer, batch, msg_indices):
@@ -649,7 +649,7 @@ def validate_phase_3(self: WMTrainer, batch, msg_indices):
     }
 
 
-# %% ../../nbs/05c_trainers.control.ipynb #588f072c
+# %% ../../nbs/05c_trainers.control.ipynb #e39d9508
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
 
