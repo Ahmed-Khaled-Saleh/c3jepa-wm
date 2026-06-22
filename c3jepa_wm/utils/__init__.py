@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer', 'init_evaluator', 'channel', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #134c0844
+# %% ../../nbs/06a_utils.__init__.ipynb #fff79cb3
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #b0141670
+# %% ../../nbs/06a_utils.__init__.ipynb #93336394
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -17,14 +17,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #6d9a48db
+# %% ../../nbs/06a_utils.__init__.ipynb #53ebcf6e
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #7435d9cd
+# %% ../../nbs/06a_utils.__init__.ipynb #c5458494
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -67,6 +67,11 @@ def init_model(cfg: DictConfig):
         models = {
             "jepa": hydra.utils.instantiate(model_cfg.jepa),
         }
+
+        if hasattr(model_cfg.jepa, "checkpoint_path") and model_cfg.jepa.checkpoint_path:
+            print(f"Loading pretrained JEPA weights from {model_cfg.jepa.checkpoint_path}")
+            checkpoint = torch.load(model_cfg.jepa.checkpoint_path, map_location="cpu")
+            models["jepa"].load_state_dict(checkpoint["model_state_dict"])
         
         # Instantiate VQ-VAE, then immediately load its pretrained weights and freeze it
         vqvae = hydra.utils.instantiate(model_cfg.vqvae)
@@ -89,7 +94,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #a4dfeae7
+# %% ../../nbs/06a_utils.__init__.ipynb #57cf93a6
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -103,7 +108,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #3afe8f1c
+# %% ../../nbs/06a_utils.__init__.ipynb #aaf11c43
 def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the evaluator and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -117,7 +122,7 @@ def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #53cbed4f
+# %% ../../nbs/06a_utils.__init__.ipynb #283586bc
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -200,7 +205,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #097a4a04
+# %% ../../nbs/06a_utils.__init__.ipynb #b66d6eb0
 class PhaseTransitionChecker:
     def __init__(
         self,

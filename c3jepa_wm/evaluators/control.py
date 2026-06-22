@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #6c6211f3
+# %% ../../nbs/07_evaluators.control.ipynb #c1defd8e
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #1ed35c07
+# %% ../../nbs/07_evaluators.control.ipynb #d2c1c485
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -40,7 +40,6 @@ class MultiAgentGoalEvaluator:
     def __init__(
         self,
         model,
-        vqvae,
         planner_cls,
         planner_kwargs,
         history_size=3,
@@ -52,8 +51,8 @@ class MultiAgentGoalEvaluator:
         noise_power=1e-3,  # noise power for SNR calculations
     ):
         assert len(agents) == 2, "This evaluator only supports exactly 2 agents."
-        self.model = model.to(device).eval()
-        self.vqvae = vqvae.to(device).eval()
+        self.model = model['jepa'].to(device).eval()
+        self.vqvae = model['vqvae'].to(device).eval()
         self.agents = list(agents)
         self.history_size = history_size
         self.goal_offset = goal_offset
@@ -180,11 +179,12 @@ class MultiAgentGoalEvaluator:
         return cost.item()
 
     @torch.no_grad()
-    def evaluate_dataset(self, dataset, num_episodes=None):
+    def evaluate_dataset(self, data_module, num_episodes=None):
         """
         dataset: iterable of episodes (each a dict as in evaluate_episode)
         Returns a list of per-episode results plus aggregate stats.
         """
+        dataset = data_module.val_dataloader()
         all_results = []
         for i, episode in enumerate(dataset):
             if num_episodes is not None and i >= num_episodes:

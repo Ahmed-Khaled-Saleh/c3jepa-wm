@@ -8,7 +8,7 @@ import torch
 import wandb
 from dotenv import load_dotenv
 
-from c3jepa_wm.utils import init_data, init_model, init_trainer
+from c3jepa_wm.utils import init_data, init_model, init_evaluator
 
 def seed_everything(seed: int):
     random.seed(seed)
@@ -26,7 +26,7 @@ def main(cfg: DictConfig):
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
-    device = torch.device("cuda") #if torch.cuda.is_available() else "cpu" : remove for traiing on puhti
+    device = torch.device("cuda") if torch.cuda.is_available() else "cpu" #: remove for traiing on puhti
     print(f"Using runtime hardware device: {device}", flush=True)
 
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
@@ -56,11 +56,11 @@ def main(cfg: DictConfig):
 
     # --- 6. Initialize Training Manager Class ---
     # (Reuses the single-GPU VQVAETrainer class created previously)
-    trainer = init_trainer(cfg, data_module, model, device, slurm_jobid)
-    print("Trainer Initialized Successfully!", flush=True)
+    evaluator = init_evaluator(cfg, data_module, model, device, slurm_jobid)
+    print("Evaluator Initialized Successfully!", flush=True)
 
     # --- 7. Execution Loop ---
-    trainer.fit(cfg)
+    evaluator.evaluate_dataset(data_module)
     
     wandb.finish()
     # logger.finish()

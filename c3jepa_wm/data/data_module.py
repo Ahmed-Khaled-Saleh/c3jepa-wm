@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule', 'WMDataModule', 'planning_collate_fn', 'PlanningDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #b506412b
+# %% ../../nbs/01c_data.data_module.ipynb #dba5f4af
 import os
 
 import numpy as np
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset, MultiAgentWorldModelDataset, MultiAgentPlanningDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #2b8bb26b
+# %% ../../nbs/01c_data.data_module.ipynb #5cf5cdf5
 class DataModule:
     def __init__(self,
                  data_dir: str, 
@@ -102,7 +102,7 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #62a0e4c3
+# %% ../../nbs/01c_data.data_module.ipynb #03dfca7f
 class VQDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -126,7 +126,7 @@ class VQDataModule(DataModule):
     
 
 
-# %% ../../nbs/01c_data.data_module.ipynb #510fd989
+# %% ../../nbs/01c_data.data_module.ipynb #8027cf6f
 class WMDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -162,7 +162,7 @@ class WMDataModule(DataModule):
         )
         
 
-# %% ../../nbs/01c_data.data_module.ipynb #b0cc0230
+# %% ../../nbs/01c_data.data_module.ipynb #dc00e3ce
 def planning_collate_fn(batch):
     """
     Collate variable-length episodes for MultiAgentPlanningDataset.
@@ -238,7 +238,7 @@ def _pad_stack(tensors, T_max):
         padded.append(t)
     return torch.stack(padded, dim=0)
 
-# %% ../../nbs/01c_data.data_module.ipynb #b91b381c
+# %% ../../nbs/01c_data.data_module.ipynb #6e097faf
 class PlanningDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -250,7 +250,6 @@ class PlanningDataModule(DataModule):
         self.img_size = img_size
         self.max_length = max_length
         super().__init__(data_dir= data_dir, batch_size= batch_size, **kwargs)
-        
 
     def setup(self):
 
