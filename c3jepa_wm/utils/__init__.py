@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer', 'channel', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #e8c73ac7
+# %% ../../nbs/06a_utils.__init__.ipynb #2884ef08
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #0f81398a
+# %% ../../nbs/06a_utils.__init__.ipynb #76d8dea0
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -17,14 +17,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f14a0e76
+# %% ../../nbs/06a_utils.__init__.ipynb #437f9aa8
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #40c7f16f
+# %% ../../nbs/06a_utils.__init__.ipynb #fd47529a
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -89,7 +89,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #3abd93af
+# %% ../../nbs/06a_utils.__init__.ipynb #9e110919
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -103,7 +103,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #ea5b515a
+# %% ../../nbs/06a_utils.__init__.ipynb #d3d16ef0
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -186,7 +186,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #b2293df8
+# %% ../../nbs/06a_utils.__init__.ipynb #a9789b8a
 class PhaseTransitionChecker:
     def __init__(
         self,

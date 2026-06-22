@@ -229,14 +229,16 @@ class MultiAgentPlanningDataset(Dataset):
         split="train",
         val_ratio=0.1,
         agents=("0", "1"),
-        transform=None,
+        jepa_transform=None,
+        vqvae_transform=None,
         max_length=None,
     ):
         assert split in ["train", "val"], "split must be 'train' or 'val'"
         self.h5_path = h5_path
         self.split = split
         self.agents = list(agents)
-        self.transform = transform
+        self.jepa_transform = jepa_transform
+        self.vqvae_transform = vqvae_transform
         self.max_length = max_length
         self.file = None
 
@@ -259,13 +261,14 @@ class MultiAgentPlanningDataset(Dataset):
         pov_seq = episode[f"{agent_id}_pov"][:length]       # (T, H, W, C)
         act_seq = episode[f"{agent_id}_act"][:length]        # (T,)
 
-        if self.transform:
-            pov_seq = torch.stack([self.transform(pov_seq[t]) for t in range(length)])  # (T, C, H, W)
-        else:
-            pov_seq = torch.from_numpy(pov_seq).float() / 255.0
+        if self.jepa_transform:
+            pov_seq = torch.stack([self.jepa_transform(pov_seq[t]) for t in range(length)])  # (T, C, H, W)
+
+        if self.vqvae_transform:
+            pov_seq_vqvae = torch.stack([self.vqvae_transform(pov_seq[t]) for t in range(length)])  # (T, C, H, W)
 
         act_seq = torch.tensor(act_seq, dtype=torch.long)  # (T,)
-        return pov_seq, act_seq
+        return pov_seq, act_seq, pov_seq_vqvae
 
     def __getitem__(self, idx):
         if self.file is None:
@@ -280,8 +283,8 @@ class MultiAgentPlanningDataset(Dataset):
 
         out = {"episode_key": episode_key, "length": length}
         for agent_id in self.agents:
-            pixels, action = self._load_agent(episode, agent_id, length)
-            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action}
+            pixels, action, pov_seq_vqvae = self._load_agent(episode, agent_id, length)
+            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action, "pov_seq_vqvae": pov_seq_vqvae}
 
         return out
 

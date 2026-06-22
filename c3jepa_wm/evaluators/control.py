@@ -5,14 +5,14 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #fe495105
+# %% ../../nbs/07_evaluators.control.ipynb #7f2c1a6b
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange
 
-# %% ../../nbs/07_evaluators.control.ipynb #fe897b6a
+# %% ../../nbs/07_evaluators.control.ipynb #db5c4354
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -176,3 +176,4 @@ class MultiAgentGoalEvaluator:
         }
 
         return {"per_episode": all_results, "summary": summary}
+    
