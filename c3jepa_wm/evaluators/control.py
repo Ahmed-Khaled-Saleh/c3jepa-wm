@@ -5,14 +5,15 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #7f2c1a6b
+# %% ../../nbs/07_evaluators.control.ipynb #fcd7d494
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange
+from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #db5c4354
+# %% ../../nbs/07_evaluators.control.ipynb #641103ef
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -46,6 +47,8 @@ class MultiAgentGoalEvaluator:
         goal_offset=10,
         agents=("agent_0", "agent_1"),
         device="cpu",
+        SNR = 10.0,  # example SNR for power/schedule extraction; in practice, this could be tuned or provided as part of the episode
+        p_max = 10,  # max power level for scheduling decisions
     ):
         assert len(agents) == 2, "This evaluator only supports exactly 2 agents."
         self.model = model.to(device).eval()
@@ -54,6 +57,8 @@ class MultiAgentGoalEvaluator:
         self.history_size = history_size
         self.goal_offset = goal_offset
         self.device = device
+        self.SNR = SNR
+        self.p_max = p_max
 
         # one planner per agent (mirrors the per-agent action_dim/horizon if they differ)
         self.planners = {
@@ -62,39 +67,61 @@ class MultiAgentGoalEvaluator:
         }
 
     @torch.no_grad()
-    def _encode_message(self, pixels_t):
-        """Encode a single-timestep observation into VQ token indices for messaging.
-        pixels_t: (B, C, H, W) -> (B, 1, 49) long tensor of VQ indices
+    def _encode_message(self, partner_pixels_vqvae_t0, csi_t0, schedule=None, power=None, no_comm=False):
         """
-        pixels_t = pixels_t.to(self.device)
-        indices = self.vqvae.get_message_indices(pixels_t)  # adjust to your VQ-VAE's actual API
-        indices = rearrange(indices, "B H W -> B (H W)")  # flatten spatial dims
-        if indices.dim() == 2:  # (B, 49) -> (B, 1, 49)
-            indices = indices.unsqueeze(1)
-        return indices
+        partner_pixels_vqvae_t0: (1, C, H, W) -- partner's obs at t0, VQ-VAE-transform space
+        csi_t0: (1,) complex -- channel state at t0 for this sender->receiver link
+        schedule, power: scalars or (1,) tensors, or None to skip channel entirely
+        """
+        partner_pixels_vqvae_t0 = partner_pixels_vqvae_t0.to(self.device)
+        indices = self.vqvae.get_message_indices(partner_pixels_vqvae_t0)  # (1, H, W)
+        indices = rearrange(indices, "B H W -> B (H W)")  # (1, 49)
 
+        if schedule is not None and power is not None:
+            n = 1  # single neighbor (the other agent)
+            csi = csi_t0.reshape(1, n, 1).to(self.device)              # (B*T=1, n, 1) complex
+            schedule = torch.as_tensor(schedule, device=self.device).reshape(1, n, 1)
+            power = torch.as_tensor(power, device=self.device).reshape(1, n, 1)
+
+            indices = channel(
+                schedule=schedule,
+                power=power,
+                msg_indices=indices,       # (B*T, 49) -> here B*T = 1
+                csi=csi,
+                device=self.device,
+                no_comm=no_comm,
+            )  # returns (B*T, 49) = (1, 49)
+
+        return indices.unsqueeze(1)  # (1, 1, 49) -- matches msg_indices shape expected downstream
+        
+
+    def _extract_power_and_schedule(self, csi, noise_power):
+        optimal_power = self.SNR * noise_power / (torch.abs(csi) ** 2 + 1e-8)
+        schedule = (optimal_power <= self.p_max).float()  # schedule decision rule: transmit if power level is below max.
+        return optimal_power, schedule
+    
     def _build_agent_info(self, episode, agent, partner, t0):
-        """
-        Build the info dict for one agent's planner call.
-        episode[agent]["pixels"]: (T, C, H, W)
-        episode[agent]["action"]: (T, action_dim)
-        """
         H = self.history_size
-        pixels = episode[agent]["pixels"][t0 - H + 1 : t0 + 1]   # (H, C, H, W)
-        actions = episode[agent]["action"][t0 - H + 1 : t0 + 1]  # (H, action_dim)
-        goal_pixels = episode[agent]["pixels"][t0 + self.goal_offset]  # (C, H, W)
+        pixels = episode[agent]["pixels"][t0 - H + 1 : t0 + 1]
+        actions = episode[agent]["action"][t0 - H + 1 : t0 + 1]
+        goal_pixels = episode[agent]["pixels"][t0 + self.goal_offset]
 
-        # partner's current observation -> message this agent receives
-        partner_obs_t0 = episode[partner]["pixels"][t0].unsqueeze(0)  # (1, C, H, W)
-        msg_indices = self._encode_message(partner_obs_t0)  # (1, 1, 49)
+        partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][t0].unsqueeze(0)
+        csi_t0 = episode[partner]["csi"][t0].unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
+        noise_power = 1.0  # example noise power; in practice, this could be estimated or provided as part of the episode
+        power_level, schedule = self._extract_power_and_schedule(csi_t0, noise_power)
+        msg_indices = self._encode_message(
+            partner_obs_vqvae_t0, csi_t0, schedule=schedule, power= power_level
+        )
 
         info = {
-            "pixels": pixels.unsqueeze(0).to(self.device),       # (1, H, C, H, W)
-            "action": actions.unsqueeze(0).to(self.device),      # (1, H, action_dim)
-            "goal": goal_pixels.unsqueeze(0).to(self.device),    # (1, C, H, W)
-            "msg_indices": msg_indices.to(self.device),          # (1, 1, 49)
+            "pixels": pixels.unsqueeze(0).to(self.device),
+            "action": actions.unsqueeze(0).to(self.device),
+            "goal": goal_pixels.unsqueeze(0).to(self.device),
+            "msg_indices": msg_indices.to(self.device),
         }
         return info
+
 
     @torch.no_grad()
     def evaluate_episode(self, episode, t0=None):

@@ -260,6 +260,7 @@ class MultiAgentPlanningDataset(Dataset):
     def _load_agent(self, episode, agent_id, length):
         pov_seq = episode[f"{agent_id}_pov"][:length]       # (T, H, W, C)
         act_seq = episode[f"{agent_id}_act"][:length]        # (T,)
+        csi_seq = episode[f"{agent_id}_csi"][:length]        # (T,) complex
 
         if self.jepa_transform:
             pov_seq = torch.stack([self.jepa_transform(pov_seq[t]) for t in range(length)])  # (T, C, H, W)
@@ -268,7 +269,8 @@ class MultiAgentPlanningDataset(Dataset):
             pov_seq_vqvae = torch.stack([self.vqvae_transform(pov_seq[t]) for t in range(length)])  # (T, C, H, W)
 
         act_seq = torch.tensor(act_seq, dtype=torch.long)  # (T,)
-        return pov_seq, act_seq, pov_seq_vqvae
+        csi_seq = torch.tensor(csi_seq, dtype=torch.complex64)  # (T,)
+        return pov_seq, act_seq, pov_seq_vqvae, csi_seq
 
     def __getitem__(self, idx):
         if self.file is None:
@@ -283,8 +285,8 @@ class MultiAgentPlanningDataset(Dataset):
 
         out = {"episode_key": episode_key, "length": length}
         for agent_id in self.agents:
-            pixels, action, pov_seq_vqvae = self._load_agent(episode, agent_id, length)
-            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action, "pov_seq_vqvae": pov_seq_vqvae}
+            pixels, action, pov_seq_vqvae, csi_seq = self._load_agent(episode, agent_id, length)
+            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action, "pov_seq_vqvae": pov_seq_vqvae, "csi": csi_seq}
 
         return out
 
@@ -292,3 +294,4 @@ class MultiAgentPlanningDataset(Dataset):
         if self.file is not None:
             self.file.close()
             self.file = None
+            
