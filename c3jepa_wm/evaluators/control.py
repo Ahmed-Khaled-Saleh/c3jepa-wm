@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #c3c1277e
+# %% ../../nbs/07_evaluators.control.ipynb #49ed5072
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ from einops import rearrange
 import hydra
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #82327f81
+# %% ../../nbs/07_evaluators.control.ipynb #3d6dd2e2
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -69,7 +69,7 @@ class MultiAgentGoalEvaluator:
         # one planner per agent (mirrors the per-agent action_dim/horizon if they differ)
         self.planners = {
             # agent: planner_cls(model=self.model, device=device, **planner_kwargs)
-            agent: hydra.utils.instantiate(planner_cfg)
+            agent: hydra.utils.instantiate(planner_cfg, model= self.model, device=device)
             for agent in self.agents
         }
 

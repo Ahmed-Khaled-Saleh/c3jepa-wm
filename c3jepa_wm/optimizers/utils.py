@@ -5,27 +5,27 @@
 # %% auto #0
 __all__ = ['get_cls', 'get_opt', 'EarlyStopper', 'init_opt']
 
-# %% ../../nbs/04a_optimizers.utils.ipynb #62e66ad5
+# %% ../../nbs/04a_optimizers.utils.ipynb #259bde6e
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/04a_optimizers.utils.ipynb #9596a0a2
+# %% ../../nbs/04a_optimizers.utils.ipynb #e27c34d0
 from functools import partial
 from torch.optim import Optimizer
 
-# %% ../../nbs/04a_optimizers.utils.ipynb #e2f52799
+# %% ../../nbs/04a_optimizers.utils.ipynb #9c2b98a5
 import importlib
 def get_cls(module_name, class_name):
     module = importlib.import_module(module_name)
     return getattr(module, class_name)
 
-# %% ../../nbs/04a_optimizers.utils.ipynb #1749b6b0
+# %% ../../nbs/04a_optimizers.utils.ipynb #d56f5868
 def get_opt(cfg, model):
     optimizer_cls = get_cls("torch.optim", cfg.optimizer.name)
     optimizer = optimizer_cls(model.parameters(), lr=cfg.optimizer.lr)
     return optimizer
 
-# %% ../../nbs/04a_optimizers.utils.ipynb #3a082f3f
+# %% ../../nbs/04a_optimizers.utils.ipynb #ab64f083
 # Source - https://stackoverflow.com/a
 # Posted by isle_of_gods, modified by community. See post 'Timeline' for change history
 # Retrieved 2025-11-15, License - CC BY-SA 4.0
@@ -48,7 +48,7 @@ class EarlyStopper:
         return False
 
 
-# %% ../../nbs/04a_optimizers.utils.ipynb #dcee65db
+# %% ../../nbs/04a_optimizers.utils.ipynb #e7115863
 import torch
 def init_opt(
     cfg,
