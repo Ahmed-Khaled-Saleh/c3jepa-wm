@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #41945be8
+# %% ../../nbs/07_evaluators.control.ipynb #4ed608ef
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ from einops import rearrange
 import hydra
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #30a36add
+# %% ../../nbs/07_evaluators.control.ipynb #f5b3fa2d
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -54,6 +54,8 @@ class MultiAgentGoalEvaluator:
     ):
         assert len(agents) == 2, "This evaluator only supports exactly 2 agents."
         self.data_module = data_module
+        self.data_module.setup()
+        
         self.model = model['jepa'].to(device).eval()
         self.vqvae = model['vqvae'].to(device).eval()
         self.agents = list(agents)
