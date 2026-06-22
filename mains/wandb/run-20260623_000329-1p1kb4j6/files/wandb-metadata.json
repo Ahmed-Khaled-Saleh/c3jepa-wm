@@ -1,0 +1,28 @@
+{
+  "os": "Linux-5.15.0-139-generic-x86_64-with-glibc2.31",
+  "python": "CPython 3.11.15",
+  "startedAt": "2026-06-22T21:03:29.140539Z",
+  "program": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/mains/eval.py",
+  "codePath": "mains/eval.py",
+  "codePathLocal": "eval.py",
+  "git": {
+    "remote": "https://github.com/Ahmed-Khaled-Saleh/c3jepa-wm.git",
+    "commit": "d49938ad2bf1af3ce329d614d54ed6a45ced98f4"
+  },
+  "email": "ahmed.elbakary@oulu.fi",
+  "root": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/mains",
+  "host": "ahmed-ThinkPad-T14-Gen-2i",
+  "executable": "/home/ahmed/miniconda3/envs/rl/bin/python",
+  "cpu_count": 4,
+  "cpu_count_logical": 8,
+  "disk": {
+    "/": {
+      "total": "502392610816",
+      "used": "437319368704"
+    }
+  },
+  "memory": {
+    "total": "16476790784"
+  },
+  "writerId": "zj1uzjf3arxszo6ipe9e59jwmjtwaeha"
+}

@@ -1,12 +1,12 @@
-# configs/config.yaml
+# configs/eval/config.yaml
 defaults:
-  - pipeline: vqvae_pretrain
+  - pipeline: eval
   - _self_
 
 exp_params:
   manual_seed: 1234
 
 logging_params:
-  project_name: "vqvae_pretraining"
-  save_dir: "/scratch/project_2009050/expirements/findgoal/logs"
-  ckp_dir: "/scratch/project_2009050/expirements/findgoal/checkpoints" #"/home/ahmed/Downloads/"
+  project_name: "planning_eval"
+  save_dir: "" #"/scratch/project_2009050/expirements/findgoal/logs"
+  ckp_dir: "" #"/scratch/project_2009050/expirements/findgoal/checkpoints" #"/home/ahmed/Downloads/"

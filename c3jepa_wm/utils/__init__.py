@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer', 'init_evaluator', 'channel', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #fff79cb3
+# %% ../../nbs/06a_utils.__init__.ipynb #8634e01d
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #93336394
+# %% ../../nbs/06a_utils.__init__.ipynb #2d29d56f
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -17,14 +17,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #53ebcf6e
+# %% ../../nbs/06a_utils.__init__.ipynb #fda54723
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #c5458494
+# %% ../../nbs/06a_utils.__init__.ipynb #dac22947
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -94,7 +94,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #57cf93a6
+# %% ../../nbs/06a_utils.__init__.ipynb #32f8e8ae
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -108,21 +108,21 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #aaf11c43
-def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
+# %% ../../nbs/06a_utils.__init__.ipynb #9083b398
+def init_evaluator(cfg: DictConfig, models, device, slurm_jobid):
     """Instantiates the evaluator and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
     # so the evaluator receives its dependencies right away.
     return hydra.utils.instantiate(
         cfg.pipeline.evaluator, 
-        data_module=data_module,
+        planner_cfg= cfg.pipeline.evaluator.planner,
         model=models, 
         device=device,
         slurm_jobid=slurm_jobid
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #283586bc
+# %% ../../nbs/06a_utils.__init__.ipynb #4f91c1d3
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -205,7 +205,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #b66d6eb0
+# %% ../../nbs/06a_utils.__init__.ipynb #66ac67f6
 class PhaseTransitionChecker:
     def __init__(
         self,

@@ -1,0 +1,141 @@
+_wandb:
+    value:
+        cli_version: 0.25.1
+        e:
+            zj1uzjf3arxszo6ipe9e59jwmjtwaeha:
+                codePath: mains/eval.py
+                codePathLocal: eval.py
+                cpu_count: 4
+                cpu_count_logical: 8
+                disk:
+                    /:
+                        total: "502392610816"
+                        used: "437319368704"
+                email: ahmed.elbakary@oulu.fi
+                executable: /home/ahmed/miniconda3/envs/rl/bin/python
+                git:
+                    commit: d49938ad2bf1af3ce329d614d54ed6a45ced98f4
+                    remote: https://github.com/Ahmed-Khaled-Saleh/c3jepa-wm.git
+                host: ahmed-ThinkPad-T14-Gen-2i
+                memory:
+                    total: "16476790784"
+                os: Linux-5.15.0-139-generic-x86_64-with-glibc2.31
+                program: /home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/mains/eval.py
+                python: CPython 3.11.15
+                root: /home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/mains
+                startedAt: "2026-06-22T21:03:29.140539Z"
+                writerId: zj1uzjf3arxszo6ipe9e59jwmjtwaeha
+        m: []
+        python_version: 3.11.15
+        t:
+            "1":
+                - 1
+                - 50
+                - 105
+            "2":
+                - 1
+                - 5
+                - 11
+                - 41
+                - 49
+                - 50
+                - 51
+                - 53
+                - 63
+                - 71
+                - 105
+                - 106
+            "3":
+                - 13
+                - 16
+            "4": 3.11.15
+            "5": 0.25.1
+            "12": 0.25.1
+            "13": linux-x86_64
+exp_params:
+    value:
+        manual_seed: 1234
+logging_params:
+    value:
+        ckp_dir: ""
+        project_name: planning_eval
+        save_dir: ""
+pipeline:
+    value:
+        datamodule:
+            _target_: c3jepa_wm.data.data_module.PlanningDataModule
+            batch_size: 2
+            img_size: 224
+            max_length: 150
+            num_workers: 0
+        embed_dim: 192
+        history_size: 3
+        img_size: 224
+        lr: 0.0001
+        max_epochs: 100
+        model:
+            jepa:
+                _target_: c3jepa_wm.models.jepa.JEPA
+                action_encoder:
+                    _target_: c3jepa_wm.models.jepa.DiscreteActionEncoder
+                    action_emb_dim: 192
+                    num_actions: 4
+                encoder:
+                    _target_: stable_pretraining.backbone.utils.vit_hf
+                    image_size: 224
+                    patch_size: 14
+                    pretrained: false
+                    size: tiny
+                    use_mask_token: false
+                pred_proj:
+                    _target_: c3jepa_wm.models.jepa.MLP
+                    hidden_dim: 2048
+                    input_dim: 192
+                    norm_fn:
+                        _partial_: true
+                        _target_: torch.nn.BatchNorm1d
+                    output_dim: 192
+                predictor:
+                    _target_: c3jepa_wm.models.jepa.ARPredictor
+                    depth: 6
+                    dim_head: 64
+                    dropout: 0.1
+                    emb_dropout: 0
+                    heads: 16
+                    hidden_dim: 192
+                    input_dim: 192
+                    mlp_dim: 2048
+                    msg_embedding_dim: 256
+                    num_embeddings: 256
+                    num_frames: 3
+                    output_dim: 192
+                projector:
+                    _target_: c3jepa_wm.models.jepa.MLP
+                    hidden_dim: 2048
+                    input_dim: 192
+                    norm_fn:
+                        _partial_: true
+                        _target_: torch.nn.BatchNorm1d
+                    output_dim: 192
+            vqvae:
+                _target_: c3jepa_wm.models.msg_net.VQVAE
+                beta: 1
+                checkpoint_path: ""
+                embedding_dim: 256
+                hidden_dims:
+                    - 64
+                    - 128
+                    - 256
+                    - 512
+                    - 512
+                img_size: 224
+                in_channels: 3
+                num_embeddings: 256
+        msg_embedding_dim: 256
+        num_embeddings: 256
+        num_workers: 6
+        power_lr: 0.0003
+        seed: 3072
+        stage: 3
+        train_split: 0.9
+        wm_lr: 0.0001

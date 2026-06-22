@@ -1,4 +1,4 @@
-# configs/model/vqvae.yaml
+# configs/eval/model/vqvae.yaml
 _target_: c3jepa_wm.models.msg_net.VQVAE # Full absolute python import path
 
 in_channels: 3

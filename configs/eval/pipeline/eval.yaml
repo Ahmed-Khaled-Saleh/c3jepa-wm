@@ -1,4 +1,4 @@
-# configs/pipeline/wm_train.yaml
+# configs/eval/pipeline/eval.yaml
 defaults:
   - /datamodule: jepa_data
   - /model@model.vqvae: vqvae
@@ -23,7 +23,18 @@ history_size: 3
 
 model:
   vqvae:
-    checkpoint_path: "/scratch/project_2009050/expirements/findgoal/checkpoints/vqvae_pretraining/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt" #"" #"${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
+    checkpoint_path: "" # "/scratch/project_2009050/expirements/findgoal/checkpoints/vqvae_pretraining/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt" #"" #"${logging_params.ckp_dir}/best_vqvae.pt" # Interpolates the global ckp_dir!
 
 
-  
+evaluator:
+  _target_: c3jepa_wm.evaluators.control.MultiAgentGoalEvaluator
+  history_size: ${pipeline.history_size} # Automatically grabs 3
+  goal_offset: 25
+  SNR: 10.0
+  p_max: 10
+  noise_power: 0.001
+  planner: 
+    __target__: c3jepa_wm.planners.mpc.JEPAGoalPlanner
+    action_dim: 1
+    
+
