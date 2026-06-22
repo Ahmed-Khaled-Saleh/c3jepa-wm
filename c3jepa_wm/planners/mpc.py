@@ -12,8 +12,8 @@ import torch.nn.functional as F
 
 # %% ../../nbs/09a_planners.mpc.ipynb #153f15c4
 class JEPAGoalPlanner:
-    def __init__(self, model, action_dim= 4, horizon=10, history_size=3,
-                 pop_size=1000, topk=100, opt_steps=10, device='cpu'):
+    def __init__(self, model, action_dim= 4, horizon=3, history_size=3,
+                 pop_size=300, topk=30, opt_steps=30, device='cpu'):
         self.model = model
         self.action_dim = action_dim
         self.horizon = horizon

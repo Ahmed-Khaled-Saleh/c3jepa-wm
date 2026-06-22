@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #ca0486e5
+# %% ../../nbs/07_evaluators.control.ipynb #bd0174d5
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +14,7 @@ from einops import rearrange
 import hydra
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #3387cb4e
+# %% ../../nbs/07_evaluators.control.ipynb #c6add63b
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -134,13 +134,12 @@ class MultiAgentGoalEvaluator:
     @torch.no_grad()
     def evaluate_episode(self, episode, t0=None):
         """
-        episode: dict keyed by agent -> {"pixels": (T,C,H,W), "action": (T,action_dim)}
+        episode: dict keyed by agent -> {"pixels": (B,T,C,H,W), "action": (B,T,action_dim)}
         t0: start step; if None, picked so that t0 - H + 1 >= 0 and t0 + goal_offset < T
         Returns per-agent dict with planned actions, ground-truth actions, and goal error.
         """
         H = self.history_size
         T = episode[self.agents[0]]["pixels"].size(1)
-        # print(episode[self.agents[0]]["pixels"].shape)
         lo = H - 1
         hi = T - self.goal_offset - 1
         print(H, T, lo, hi)
@@ -155,7 +154,7 @@ class MultiAgentGoalEvaluator:
 
             first_action, plan = self.planners[agent].plan(info)
 
-            gt_future_actions = episode[agent]["action"][t0 + 1 : t0 + 1 + plan.size(1)]
+            gt_future_actions = episode[agent]["action"][:, t0 + 1 : t0 + 1 + plan.size(1)]
             goal_err = self.planners[agent].eval_plan(info, self.device, plan) #self._goal_error(episode, agent, t0, plan)
 
             results[agent] = {
@@ -166,24 +165,6 @@ class MultiAgentGoalEvaluator:
                 "goal_error": goal_err,
             }
         return results
-
-    @torch.no_grad()
-    def _goal_error(self, episode, agent, t0, plan):
-        """Roll the *true* dynamics forward isn't available (no env here), so this
-        measures embedding-space distance between the model's own final predicted
-        state and the true goal embedding -- i.e. how well the model itself thinks
-        the plan reaches the goal. Swap for env-based execution if you have a sim.
-        """
-        H = self.history_size
-        pixels = episode[agent]["pixels"][t0 - H + 1 : t0 + 1].unsqueeze(0).to(self.device)
-        actions = episode[agent]["action"][t0 - H + 1 : t0 + 1].unsqueeze(0).to(self.device)
-        goal_pixels = episode[agent]["pixels"][t0 + self.goal_offset].unsqueeze(0).to(self.device)
-
-        info = {"pixels": pixels, "action": actions, "goal": goal_pixels}
-        action_seq = torch.cat([actions, plan.to(self.device)], dim=1).unsqueeze(1)  # add S=1 dim
-        info_for_cost = {k: (v.unsqueeze(1) if torch.is_tensor(v) else v) for k, v in info.items()}
-        cost = self.model.get_cost(info_for_cost, action_seq)  # (1, 1)
-        return cost.item()
 
     @torch.no_grad()
     def evaluate_dataset(self, num_episodes=None):

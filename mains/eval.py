@@ -1,6 +1,5 @@
 import os
 import random
-from pathlib import Path
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -39,8 +38,6 @@ def main(cfg: DictConfig):
         name="wm",
         project= cfg.logging_params.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
-        # mode="offline",
-        # settings=wandb.Settings(start_method="thread")
     )
 
     print("Weights & Biases Initialized Successfully!", flush=True)
@@ -50,7 +47,6 @@ def main(cfg: DictConfig):
     print("Data Module Initialized Successfully!", flush=True)
 
     # --- 5. Build Model Architecture ---
-    # Filter out 'name' so it matches your architecture's constructor signature
     model = init_model(cfg)
     print("Model Initialized Successfully!", flush=True)
 
