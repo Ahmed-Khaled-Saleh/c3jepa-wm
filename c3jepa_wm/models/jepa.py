@@ -6,20 +6,20 @@
 __all__ = ['modulate', 'SIGReg', 'DiscreteActionEncoder', 'FeedForward', 'Attention', 'MessageConditionedBlock',
            'ConditionalBlock', 'Block', 'Transformer', 'Embedder', 'MLP', 'ARPredictor', 'detach_clone', 'JEPA']
 
-# %% ../../nbs/02c_models.jepa.ipynb #4ccc89f7
+# %% ../../nbs/02c_models.jepa.ipynb #357809bf
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #9b03f1e0
+# %% ../../nbs/02c_models.jepa.ipynb #968ae4ce
 def modulate(x, shift, scale):
     """AdaLN-zero modulation"""
     return x * (1 + scale) + shift
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #dd6b0a9e
+# %% ../../nbs/02c_models.jepa.ipynb #31697901
 class SIGReg(torch.nn.Module):
     """Sketch Isotropic Gaussian Regularizer (single-GPU!)"""
 
@@ -49,7 +49,7 @@ class SIGReg(torch.nn.Module):
         return statistic.mean() # average over projections and time
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #7694c2fc
+# %% ../../nbs/02c_models.jepa.ipynb #6189773e
 class DiscreteActionEncoder(nn.Module):
     def __init__(self, num_actions, action_emb_dim):
         super().__init__()
@@ -63,7 +63,7 @@ class DiscreteActionEncoder(nn.Module):
         return self.embedding(action)
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #91f93bba
+# %% ../../nbs/02c_models.jepa.ipynb #107aa498
 class FeedForward(nn.Module):
     """FeedForward network used in Transformers"""
 
@@ -82,7 +82,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #62dd6afe
+# %% ../../nbs/02c_models.jepa.ipynb #2e29a615
 class Attention(nn.Module):
     """Scaled dot-product attention with causal masking"""
 
@@ -116,7 +116,7 @@ class Attention(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #c953a5d9
+# %% ../../nbs/02c_models.jepa.ipynb #def7c983
 class MessageConditionedBlock(nn.Module):
     """Transformer block with AdaLN-zero for actions + cross-attention for message"""
     
@@ -223,7 +223,7 @@ class MessageConditionedBlock(nn.Module):
         x = x + gate_mlp * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
-# %% ../../nbs/02c_models.jepa.ipynb #0cc6d520
+# %% ../../nbs/02c_models.jepa.ipynb #ea1abd13
 class ConditionalBlock(nn.Module):
     """Transformer block with AdaLN-zero conditioning"""
 
@@ -251,7 +251,7 @@ class ConditionalBlock(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #2b6f5a5b
+# %% ../../nbs/02c_models.jepa.ipynb #221a1a5d
 class Block(nn.Module):
     """Standard Transformer block"""
 
@@ -270,7 +270,7 @@ class Block(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #6fabf0a7
+# %% ../../nbs/02c_models.jepa.ipynb #e7135107
 class Transformer(nn.Module):
     """Standard Transformer with support for AdaLN-zero blocks"""
 
@@ -334,7 +334,7 @@ class Transformer(nn.Module):
         return x
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #e04b0466
+# %% ../../nbs/02c_models.jepa.ipynb #63c6e834
 class Embedder(nn.Module):
     def __init__(
         self,
@@ -364,7 +364,7 @@ class Embedder(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #09dc4378
+# %% ../../nbs/02c_models.jepa.ipynb #a07c61f8
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
@@ -393,7 +393,7 @@ class MLP(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #f5f01327
+# %% ../../nbs/02c_models.jepa.ipynb #62170abe
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -459,7 +459,7 @@ class ARPredictor(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #3ae04afc
+# %% ../../nbs/02c_models.jepa.ipynb #3b607ff2
 """JEPA Implementation"""
 
 def detach_clone(v):
@@ -578,7 +578,7 @@ class JEPA(nn.Module):
             pred_emb = self.predict(emb_trunc, act_trunc, step_msg_indices)[:, -1:]  # (BS, 1, D)
             emb = torch.cat([emb, pred_emb], dim=1)  # (BS, T+1, D)
 
-            next_act = act_future[:, t : t + 1, :]  # (BS, 1, action_dim)
+            next_act = act_future[:, t : t + 1]  # (BS, 1, action_dim)
             act = torch.cat([act, next_act], dim=1)  # (BS, T+1, action_dim)
 
         # predict the last state
@@ -620,7 +620,7 @@ class JEPA(nn.Module):
             if torch.is_tensor(info_dict[k]):
                 info_dict[k] = info_dict[k].to(device)
 
-        goal = {k: v[:, 0] for k, v in info_dict.items() if torch.is_tensor(v)}
+        goal = {k: v[:, :1] for k, v in info_dict.items() if torch.is_tensor(v)}
         goal["pixels"] = goal["goal"]
 
         for k in info_dict:
@@ -629,8 +629,7 @@ class JEPA(nn.Module):
 
         goal.pop("action")
         goal = self.encode(goal)
-
-        info_dict["goal_emb"] = goal["emb"]
+        info_dict["goal_emb"] = goal["emb"].unsqueeze(2)  # (B, S=1, T=1, D) — ready to broadcast in criterion
         info_dict = self.rollout(info_dict, action_candidates)
 
         cost = self.criterion(info_dict)

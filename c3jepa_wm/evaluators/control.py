@@ -5,16 +5,17 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #bd0174d5
+# %% ../../nbs/07_evaluators.control.ipynb #7780c166
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from einops import rearrange
 import hydra
+import wandb
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #c6add63b
+# %% ../../nbs/07_evaluators.control.ipynb #413eec9b
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -86,7 +87,7 @@ class MultiAgentGoalEvaluator:
 
         if schedule is not None and power is not None:
             n = 1  # single neighbor (the other agent)
-            print(csi_t0.shape, schedule.shape, power.shape)
+            # print(csi_t0.shape, schedule.shape, power.shape)
             csi = csi_t0 #csi_t0.reshape(1, n, 1).to(self.device)              # (B*T=1, n, 1) complex
             schedule = torch.as_tensor(schedule, device=self.device)#.reshape(1, n, 1)
             power = torch.as_tensor(power, device=self.device)#.reshape(1, n, 1)
@@ -114,6 +115,7 @@ class MultiAgentGoalEvaluator:
         pixels = episode[agent]["pixels"][:, t0 - H + 1 : t0 + 1]
         actions = episode[agent]["action"][:, t0 - H + 1 : t0 + 1]
         goal_pixels = episode[agent]["pixels"][:, t0 + self.goal_offset]
+        print(f"Agent {agent} at t0={t0}: pixels shape {pixels.shape}, actions shape {actions.shape}, goal_pixels shape {goal_pixels.shape}")
 
         partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][:, t0]#.unsqueeze(0)
         csi_t0 = episode[partner]["csi"][:, t0]#.unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
@@ -123,13 +125,15 @@ class MultiAgentGoalEvaluator:
         )
 
         info = {
-            "pixels": pixels.unsqueeze(0).to(self.device),
-            "action": actions.unsqueeze(0).to(self.device),
-            "goal": goal_pixels.unsqueeze(0).to(self.device),
+            "pixels": pixels.to(self.device),
+            "action": actions.to(self.device),
+            "goal": goal_pixels.to(self.device),
             "msg_indices": msg_indices.to(self.device),
         }
+        print(f"Built info dict for agent {agent}:")
+        for k, v in info.items():
+            print(f"  {k}: shape {v.shape}, dtype {v.dtype}")
         return info
-
 
     @torch.no_grad()
     def evaluate_episode(self, episode, t0=None):
@@ -142,7 +146,6 @@ class MultiAgentGoalEvaluator:
         T = episode[self.agents[0]]["pixels"].size(1)
         lo = H - 1
         hi = T - self.goal_offset - 1
-        print(H, T, lo, hi)
         assert hi >= lo, "Episode too short for given history_size/goal_offset."
         if t0 is None:
             t0 = torch.randint(lo, hi + 1, (1,)).item()
@@ -156,7 +159,7 @@ class MultiAgentGoalEvaluator:
 
             gt_future_actions = episode[agent]["action"][:, t0 + 1 : t0 + 1 + plan.size(1)]
             goal_err = self.planners[agent].eval_plan(info, self.device, plan) #self._goal_error(episode, agent, t0, plan)
-
+            
             results[agent] = {
                 "t0": t0,
                 "planned_actions": plan.squeeze(0).cpu(),
@@ -174,24 +177,55 @@ class MultiAgentGoalEvaluator:
         """
         dataset = self.data_module.val_dataloader()
         all_results = []
+        # import ipdb; ipdb.set_trace()
         for i, episode in enumerate(dataset):
             if num_episodes is not None and i >= num_episodes:
                 break
             all_results.append(self.evaluate_episode(episode))
+
+            if i > 1: # TODO: remove this
+                break  # for debugging, limit to a few episodes
 
         agg = {agent: {"goal_error": []} for agent in self.agents}
         for ep_res in all_results:
             for agent in self.agents:
                 agg[agent]["goal_error"].append(ep_res[agent]["goal_error"])
 
-        summary = {
-            agent: {
-                "mean_goal_error": float(torch.tensor(agg[agent]["goal_error"]).mean()),
-                "std_goal_error": float(torch.tensor(agg[agent]["goal_error"]).std()),
+        # summary = {
+        #     agent: {
+        #         "mean_goal_error": float(torch.tensor(agg[agent]["goal_error"]).mean()),
+        #         "std_goal_error": float(torch.tensor(agg[agent]["goal_error"]).std()),
+        #         "n": len(agg[agent]["goal_error"]),
+        #     }
+        #     for agent in self.agents
+        # }
+
+
+        summary = {}
+        for agent in self.agents:
+            # Stack the list of [2D tensors] into a single 2D tensor [N, 2]
+            stacked_errors = torch.stack(agg[agent]["goal_error"])
+            
+            # Option A: If you want a single scalar distance error per agent (L2 Norm)
+            # (Highly recommended for trajectory/goal error evaluation)
+            l2_errors = torch.norm(stacked_errors, dim=-1) # Shape: [N]
+            
+            summary[agent] = {
+                "mean_goal_error": float(l2_errors.mean()),
+                "std_goal_error": float(l2_errors.std()),
                 "n": len(agg[agent]["goal_error"]),
             }
-            for agent in self.agents
+
+        # Flatten the dictionary for WandB tracking
+        wandb_log_dict = {
+            f"eval/{agent}/{metric}": value
+            for agent, metrics in summary.items()
+            for metric, value in metrics.items()
         }
+
+        # Log the flat dictionary
+        # If running this at the end of an epoch, pass the current epoch/step if you have it
+        wandb.log(wandb_log_dict)
 
         return {"per_episode": all_results, "summary": summary}
     

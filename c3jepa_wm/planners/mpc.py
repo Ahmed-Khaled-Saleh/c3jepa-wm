@@ -28,17 +28,19 @@ class JEPAGoalPlanner:
         B, H, A = probs.shape
         flat = probs.unsqueeze(1).expand(B, self.pop_size, H, A).reshape(-1, A)
         idx = torch.multinomial(flat, 1).view(B, self.pop_size, H)
-        return F.one_hot(idx, num_classes=A).float()
+        return idx.float()
+        #return F.one_hot(idx, num_classes=A).float()
 
     def _update_dist(self, cost, samples):
-        # cost: (B, S), samples: (B, S, horizon, action_dim)
-        B, S, H, A = samples.shape
+        # cost: (B, S), samples: (B, S, horizon) -- raw action indices (dimensionless)
+        B, S, H = samples.shape
+        A = self.action_dim  # must come from self, since samples no longer carries it
         new_probs = torch.zeros(B, H, A, device=cost.device)
         for b in range(B):
             elite_idx = torch.topk(-cost[b], self.topk).indices
-            elites = samples[b, elite_idx]  # (topk, H, A)
+            elites = samples[b, elite_idx]  # (topk, H) -- raw indices
             for t in range(H):
-                counts = torch.bincount(elites[:, t].argmax(dim=-1), minlength=A).float()
+                counts = torch.bincount(elites[:, t].long(), minlength=A).float()
                 new_probs[b, t] = (counts + 1e-6) / (counts.sum() + 1e-6 * A)
         return new_probs
 
@@ -64,7 +66,7 @@ class JEPAGoalPlanner:
             hist_action = info_dict["action"].unsqueeze(1).expand(
                 B, self.pop_size, *info_dict["action"].shape[1:]
             )
-            action_candidates = torch.cat([hist_action, samples], dim=2).to(device)
+            action_candidates = torch.cat([hist_action, samples], dim=2).long().to(device)
 
             # expand the rest of info_dict over the sample (S) dimension
             cand_info = {
@@ -72,18 +74,20 @@ class JEPAGoalPlanner:
                     if torch.is_tensor(v) else v)
                 for k, v in info_dict.items()
             }
-
+            
             cost = self.model.get_cost(cand_info, action_candidates)  # (B, S)
             probs = self._update_dist(cost, samples)
-
+            
+        
         plan = torch.argmax(probs, dim=-1)       # (B, horizon)
         first_action = plan[:, 0]
         return first_action, plan
     
     @torch.no_grad()
     def eval_plan(self, info_dict, device, plan):
+        
         final_action_seq = torch.cat(
-        [info_dict["action"], F.one_hot(plan, num_classes=self.action_dim).float()],
+        [info_dict["action"],plan], #F.one_hot(plan, num_classes=self.action_dim).float()],
         dim=1,
         ).unsqueeze(1).to(device)  # (B, 1, H+horizon, action_dim)
 
