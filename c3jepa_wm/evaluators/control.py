@@ -5,7 +5,8 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #bbc85fd0
+# %% ../../nbs/07_evaluators.control.ipynb #28ce16b4
+from collections import defaultdict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,9 +14,10 @@ import torch.nn.functional as F
 from einops import rearrange
 import hydra
 import wandb
+from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #e943c6e7
+# %% ../../nbs/07_evaluators.control.ipynb #9c6a2947
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -219,3 +221,80 @@ class MultiAgentGoalEvaluator:
 
         return {"per_episode": all_results, "summary": summary}
     
+
+# %% ../../nbs/07_evaluators.control.ipynb #7119a4f3
+@patch
+@torch.no_grad()
+def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
+    """
+    Like evaluate_episode, but runs the planner at multiple t0 values across
+    the episode instead of a single random one, so you can track how goal
+    error evolves over the course of an episode.
+
+    t0_values: explicit list of t0s to evaluate; if None, generated via t0_stride
+               over the valid range [H-1, T-goal_offset-1].
+    Returns: {agent: {"t0": [...], "goal_error": [...]}}
+    """
+    H = self.history_size
+    T = episode[self.agents[0]]["pixels"].size(1)
+    lo = H - 1
+    hi = T - self.goal_offset - 1
+    assert hi >= lo, "Episode too short for given history_size/goal_offset."
+
+    if t0_values is None:
+        t0_values = list(range(lo, hi + 1, t0_stride))
+
+    results = {agent: {"t0": [], "goal_error": []} for agent in self.agents}
+    for t0 in t0_values:
+        for agent in self.agents:
+            partner = [a for a in self.agents if a != agent][0]
+            info = self._build_agent_info(episode, agent, partner, t0)
+            first_action, plan = self.planners[agent].plan(info)
+            goal_err = self.planners[agent].eval_plan(info, self.device, plan)  # (B,) or (B, D)
+
+            results[agent]["t0"].append(t0)
+            results[agent]["goal_error"].append(goal_err.cpu())
+
+    return results
+
+# %% ../../nbs/07_evaluators.control.ipynb #f1af05a3
+@patch
+@torch.no_grad()
+def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
+    dataset = self.data_module.val_dataloader()
+
+    # collect per-agent: {t0: [errors across episodes]}
+    per_agent_t0_errors = {agent: defaultdict(list) for agent in self.agents}
+
+    for i, episode in enumerate(dataset):
+        if num_episodes is not None and i >= num_episodes:
+            break
+        ep_res = self.evaluate_episode_over_time(episode, t0_stride=t0_stride)
+        for agent in self.agents:
+            for t0, err in zip(ep_res[agent]["t0"], ep_res[agent]["goal_error"]):
+                # err may be (B,) or (B, D) -- reduce to scalar per episode/t0 first
+                err_scalar = torch.norm(err, dim=-1).mean().item() if err.dim() > 1 else err.mean().item()
+                per_agent_t0_errors[agent][t0].append(err_scalar)
+
+    # build mean/std curves per agent
+    curves = {}
+    for agent in self.agents:
+        t0s = sorted(per_agent_t0_errors[agent].keys())
+        means = [float(torch.tensor(per_agent_t0_errors[agent][t0]).mean()) for t0 in t0s]
+        stds = [float(torch.tensor(per_agent_t0_errors[agent][t0]).std()) for t0 in t0s]
+        curves[agent] = {"t0": t0s, "mean": means, "std": stds}
+
+    # log as a wandb line plot -- one line per agent
+    for agent in self.agents:
+        table = wandb.Table(
+            data=list(zip(curves[agent]["t0"], curves[agent]["mean"])),
+            columns=["t0", "mean_goal_error"],
+        )
+        wandb.log({
+            f"eval/{agent}/goal_error_over_time": wandb.plot.line(
+                table, x="t0", y="mean_goal_error",
+                title=f"{agent} goal error vs t0",
+            )
+        })
+
+    return curves

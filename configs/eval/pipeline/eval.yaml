@@ -43,3 +43,7 @@ planner:
   pop_size: 300
   topk: 30
   opt_steps: 30  
+
+
+eval_func:
+  _target_: c3jepa_wm.evaluators.control.MultiAgentGoalEvaluator.evaluate_dataset_over_time

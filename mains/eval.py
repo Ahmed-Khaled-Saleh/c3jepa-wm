@@ -56,10 +56,10 @@ def main(cfg: DictConfig):
     print("Evaluator Initialized Successfully!", flush=True)
 
     # --- 7. Execution Loop ---
-    evaluator.evaluate_dataset()
+    # evaluator.evaluate_dataset()
+    hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator)
     
     wandb.finish()
-    # logger.finish()
 
 if __name__ == "__main__":
     main()
