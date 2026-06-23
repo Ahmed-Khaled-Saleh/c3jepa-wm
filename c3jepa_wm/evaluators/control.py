@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #7780c166
+# %% ../../nbs/07_evaluators.control.ipynb #290395b7
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,7 +15,7 @@ import hydra
 import wandb
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #413eec9b
+# %% ../../nbs/07_evaluators.control.ipynb #bf68e5be
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -183,23 +183,13 @@ class MultiAgentGoalEvaluator:
                 break
             all_results.append(self.evaluate_episode(episode))
 
-            if i > 1: # TODO: remove this
-                break  # for debugging, limit to a few episodes
+            # if i > 1: # TODO: remove this
+            #     break  # for debugging, limit to a few episodes
 
         agg = {agent: {"goal_error": []} for agent in self.agents}
         for ep_res in all_results:
             for agent in self.agents:
                 agg[agent]["goal_error"].append(ep_res[agent]["goal_error"])
-
-        # summary = {
-        #     agent: {
-        #         "mean_goal_error": float(torch.tensor(agg[agent]["goal_error"]).mean()),
-        #         "std_goal_error": float(torch.tensor(agg[agent]["goal_error"]).std()),
-        #         "n": len(agg[agent]["goal_error"]),
-        #     }
-        #     for agent in self.agents
-        # }
-
 
         summary = {}
         for agent in self.agents:
