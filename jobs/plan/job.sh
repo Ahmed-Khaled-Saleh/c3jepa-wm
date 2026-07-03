@@ -21,3 +21,12 @@ cd /projappl/project_2009050/c3jepa-wm/mains/
 # ts=$(date +%Y%m%d_%H%M%S)
 # srun torchrun --standalone --nnodes=1 --nproc_per_node=1 train_wm.py --config ../cfgs/findgoal/mawm/ablations/datasize/mawm_ds_1k.yaml --env_file ../.env --timestamp ${ts}
 srun python eval.py
+
+
+# singularity exec --nv \
+#   -B /lib/x86_64-linux-gnu:/host_glibc \
+#   --env LD_LIBRARY_PATH=/host_glibc:$LD_LIBRARY_PATH \
+#   -B $SCRATCH:$SCRATCH \
+#   -e ACCEPT_EULA=Y \
+#   isaac-sim_4.5.0.sif \
+#   /isaac-sim/isaac-sim.sh
