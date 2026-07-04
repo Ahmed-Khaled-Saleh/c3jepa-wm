@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #f3a409be
+# %% ../../nbs/07_evaluators.control.ipynb #628f36b4
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ import wandb
 from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #65aab37f
+# %% ../../nbs/07_evaluators.control.ipynb #91539297
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -90,7 +90,7 @@ class MultiAgentGoalEvaluator:
         if schedule is not None and power is not None:
             n = 1  # single neighbor (the other agent)
             # print(csi_t0.shape, schedule.shape, power.shape)
-            csi = csi_t0 #csi_t0.reshape(1, n, 1).to(self.device)              # (B*T=1, n, 1) complex
+            csi = csi_t0.to(self.device) #csi_t0.reshape(1, n, 1).to(self.device)              # (B*T=1, n, 1) complex
             schedule = torch.as_tensor(schedule, device=self.device)#.reshape(1, n, 1)
             power = torch.as_tensor(power, device=self.device)#.reshape(1, n, 1)
 
@@ -121,8 +121,9 @@ class MultiAgentGoalEvaluator:
 
         partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][:, t0]#.unsqueeze(0)
         csi_t0 = episode[partner]["csi"][:, t0]#.unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
+        csi_t0 = csi_t0.to(self.device)
         print("Getting the power level and schedule for the channel...")
-        power_level, schedule = self._extract_power_and_schedule(csi_t0)
+        power_level, schedule = self._extract_power_and_schedule(csi_t0.to)
         print("Encoding message from partner's observation...")
         msg_indices = self._encode_message(
             partner_obs_vqvae_t0, csi_t0, schedule= schedule, power= power_level
@@ -225,7 +226,7 @@ class MultiAgentGoalEvaluator:
         return {"per_episode": all_results, "summary": summary}
     
 
-# %% ../../nbs/07_evaluators.control.ipynb #f341f041
+# %% ../../nbs/07_evaluators.control.ipynb #b5a06b60
 @patch
 @torch.no_grad()
 def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
@@ -265,7 +266,7 @@ def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values
 
     return results
 
-# %% ../../nbs/07_evaluators.control.ipynb #3ad20e9f
+# %% ../../nbs/07_evaluators.control.ipynb #b6467d07
 @patch
 @torch.no_grad()
 def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
