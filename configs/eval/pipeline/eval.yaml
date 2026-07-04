@@ -34,7 +34,8 @@ evaluator:
   SNR: 10.0
   p_max: 10
   noise_power: 0.001
-
+  device: "cuda"
+  
 planner: 
   _target_: c3jepa_wm.planners.mpc.JEPAGoalPlanner
   horizon: ${pipeline.history_size}

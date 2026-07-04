@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #177956a6
+# %% ../../nbs/07_evaluators.control.ipynb #f3a409be
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ import wandb
 from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #d4683497
+# %% ../../nbs/07_evaluators.control.ipynb #65aab37f
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -225,7 +225,7 @@ class MultiAgentGoalEvaluator:
         return {"per_episode": all_results, "summary": summary}
     
 
-# %% ../../nbs/07_evaluators.control.ipynb #09979351
+# %% ../../nbs/07_evaluators.control.ipynb #f341f041
 @patch
 @torch.no_grad()
 def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
@@ -265,7 +265,7 @@ def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values
 
     return results
 
-# %% ../../nbs/07_evaluators.control.ipynb #e243a464
+# %% ../../nbs/07_evaluators.control.ipynb #3ad20e9f
 @patch
 @torch.no_grad()
 def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
