@@ -232,6 +232,7 @@ class MultiAgentPlanningDataset(Dataset):
         jepa_transform=None,
         vqvae_transform=None,
         max_length=None,
+        min_length= 1
     ):
         assert split in ["train", "val"], "split must be 'train' or 'val'"
         self.h5_path = h5_path
@@ -242,14 +243,31 @@ class MultiAgentPlanningDataset(Dataset):
         self.max_length = max_length
         self.file = None
 
+        # with h5py.File(self.h5_path, "r") as f:
+        #     all_episodes = sorted(list(f.keys()))
+        #     num_episodes = len(all_episodes)
+        #     val_count = int(num_episodes * val_ratio)
+        #     train_count = num_episodes - val_count
+
+        #     self.episode_keys = (
+        #         all_episodes[:train_count] if self.split == "train" else all_episodes[train_count:]
+        #     )
         with h5py.File(self.h5_path, "r") as f:
             all_episodes = sorted(list(f.keys()))
-            num_episodes = len(all_episodes)
+            # drop episodes with degenerate (<= 0, or < min_length) success horizon
+            valid_episodes = [
+                k for k in all_episodes
+                if np.min(f[k]["agents_success_at"]) >= min_length
+            ]
+            dropped = len(all_episodes) - len(valid_episodes)
+            if dropped:
+                print(f"[MultiAgentPlanningDataset] dropped {dropped} degenerate episode(s) "
+                    f"with agents_success_at < {min_length}")
+            num_episodes = len(valid_episodes)
             val_count = int(num_episodes * val_ratio)
             train_count = num_episodes - val_count
-
             self.episode_keys = (
-                all_episodes[:train_count] if self.split == "train" else all_episodes[train_count:]
+                valid_episodes[:train_count] if split == "train" else valid_episodes[train_count:]
             )
 
         print(f"Initialized {self.split} planning split with {len(self.episode_keys)} episodes.")

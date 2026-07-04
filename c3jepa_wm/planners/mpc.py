@@ -58,7 +58,7 @@ class JEPAGoalPlanner:
         device = self.device
         B = info_dict["pixels"].size(0)
         probs = torch.full((B, self.horizon, self.action_dim), 1.0 / self.action_dim, device=device)
-
+        print("Starting planning with {} optimization steps...".format(self.opt_steps))
         for _ in range(self.opt_steps):
             samples = self._sample_actions(probs)  # (B, S, horizon, action_dim)
 
@@ -77,7 +77,7 @@ class JEPAGoalPlanner:
             
             cost = self.model.get_cost(cand_info, action_candidates)  # (B, S)
             probs = self._update_dist(cost, samples)
-            
+            print("Optimization step completed.")
         
         plan = torch.argmax(probs, dim=-1)       # (B, horizon)
         first_action = plan[:, 0]

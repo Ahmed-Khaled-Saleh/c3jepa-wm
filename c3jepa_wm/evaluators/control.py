@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #fdae8a49
+# %% ../../nbs/07_evaluators.control.ipynb #177956a6
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ import wandb
 from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #8c16229b
+# %% ../../nbs/07_evaluators.control.ipynb #d4683497
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -121,7 +121,9 @@ class MultiAgentGoalEvaluator:
 
         partner_obs_vqvae_t0 = episode[partner]["pov_seq_vqvae"][:, t0]#.unsqueeze(0)
         csi_t0 = episode[partner]["csi"][:, t0]#.unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
+        print("Getting the power level and schedule for the channel...")
         power_level, schedule = self._extract_power_and_schedule(csi_t0)
+        print("Encoding message from partner's observation...")
         msg_indices = self._encode_message(
             partner_obs_vqvae_t0, csi_t0, schedule= schedule, power= power_level
         )
@@ -156,8 +158,9 @@ class MultiAgentGoalEvaluator:
         for agent in self.agents:
             partner = [a for a in self.agents if a != agent][0]
             info = self._build_agent_info(episode, agent, partner, t0)
-
+            print(f"Evaluating agent {agent} at t0={t0} with info keys: {list(info.keys())}")
             first_action, plan = self.planners[agent].plan(info)
+            print(f"Agent {agent} planned actions shape: {plan.shape}, first action shape: {first_action.shape}")
 
             gt_future_actions = episode[agent]["action"][:, t0 + 1 : t0 + 1 + plan.size(1)]
             goal_err = self.planners[agent].eval_plan(info, self.device, plan) #self._goal_error(episode, agent, t0, plan)
@@ -222,7 +225,7 @@ class MultiAgentGoalEvaluator:
         return {"per_episode": all_results, "summary": summary}
     
 
-# %% ../../nbs/07_evaluators.control.ipynb #6017a1c0
+# %% ../../nbs/07_evaluators.control.ipynb #09979351
 @patch
 @torch.no_grad()
 def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
@@ -249,15 +252,20 @@ def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values
         for agent in self.agents:
             partner = [a for a in self.agents if a != agent][0]
             info = self._build_agent_info(episode, agent, partner, t0)
+            print("Planning for agent {} at t0={}".format(agent, t0))
             first_action, plan = self.planners[agent].plan(info)
+            print("planned actions for agent {} at t0={}".format(agent, t0))
             goal_err = self.planners[agent].eval_plan(info, self.device, plan)  # (B,) or (B, D)
+            print("computing the goal ERR...")
 
             results[agent]["t0"].append(t0)
+            print("Appending goal error for agent {} at t0={}".format(agent, t0))
             results[agent]["goal_error"].append(goal_err.cpu())
+            print("finished evaluating agent {} at t0={}".format(agent, t0))
 
     return results
 
-# %% ../../nbs/07_evaluators.control.ipynb #5fbf705d
+# %% ../../nbs/07_evaluators.control.ipynb #e243a464
 @patch
 @torch.no_grad()
 def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
@@ -269,7 +277,10 @@ def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None,
     for i, episode in enumerate(dataset):
         if num_episodes is not None and i >= num_episodes:
             break
+        print(f"Evaluating episode {i} over time...")
         ep_res = self.evaluate_episode_over_time(episode, t0_stride=t0_stride)
+        print(f"Episode {i} evaluation complete. Aggregating results...")
+        # import ipdb; ipdb.set_trace()
         for agent in self.agents:
             for t0, err in zip(ep_res[agent]["t0"], ep_res[agent]["goal_error"]):
                 # err may be (B,) or (B, D) -- reduce to scalar per episode/t0 first

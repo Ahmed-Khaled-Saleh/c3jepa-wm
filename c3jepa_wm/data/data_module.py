@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule', 'WMDataModule', 'planning_collate_fn', 'PlanningDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #695c50ea
+# %% ../../nbs/01c_data.data_module.ipynb #369d31bc
 import os
 
 import numpy as np
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset, MultiAgentWorldModelDataset, MultiAgentPlanningDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #6c732671
+# %% ../../nbs/01c_data.data_module.ipynb #693aabc9
 class DataModule:
     def __init__(self,
                  data_dir: str, 
@@ -102,7 +102,7 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #ec2681c9
+# %% ../../nbs/01c_data.data_module.ipynb #ca662e04
 class VQDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -126,7 +126,7 @@ class VQDataModule(DataModule):
     
 
 
-# %% ../../nbs/01c_data.data_module.ipynb #ffe42dcc
+# %% ../../nbs/01c_data.data_module.ipynb #cac4a956
 class WMDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -162,7 +162,7 @@ class WMDataModule(DataModule):
         )
         
 
-# %% ../../nbs/01c_data.data_module.ipynb #53e43ac3
+# %% ../../nbs/01c_data.data_module.ipynb #c078c227
 def planning_collate_fn(batch):
     """
     Collate variable-length episodes for MultiAgentPlanningDataset.
@@ -238,17 +238,21 @@ def _pad_stack(tensors, T_max):
         padded.append(t)
     return torch.stack(padded, dim=0)
 
-# %% ../../nbs/01c_data.data_module.ipynb #23dd03e7
+# %% ../../nbs/01c_data.data_module.ipynb #d9df212a
 class PlanningDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
                  img_size: int = 224,
                  max_length= 150,
+                 history_size: int = 3,
+                 goal_offset: int = 10,
                  **kwargs):
         
         data_dir = self.get_data_path()
         self.img_size = img_size
         self.max_length = max_length
+        self.history_size = history_size
+        self.goal_offset = goal_offset
         super().__init__(data_dir= data_dir, batch_size= batch_size, **kwargs)
 
     def setup(self):
@@ -261,7 +265,8 @@ class PlanningDataModule(DataModule):
             split= "train", 
             jepa_transform= self.train_receiver_transform,
             vqvae_transform= self.train_sender_transform,
-            max_length= self.max_length
+            max_length= self.max_length,
+            min_length= self.history_size + self.goal_offset + 1
         )
 
         self.val_dataset  = MultiAgentPlanningDataset(
@@ -269,7 +274,8 @@ class PlanningDataModule(DataModule):
             split= "val",
             jepa_transform= self.val_receiver_transform,
             vqvae_transform= self.val_sender_transform,
-            max_length= self.max_length
+            max_length= self.max_length,
+            min_length= self.history_size + self.goal_offset + 1
         )
 
     def collator(self):

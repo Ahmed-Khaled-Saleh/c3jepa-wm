@@ -4,5 +4,6 @@ _target_: c3jepa_wm.data.data_module.PlanningDataModule # Full python import pat
 batch_size: 128
 max_length: 150
 num_workers: 0
-# history_size: ${pipeline.history_size} # Automatically grabs 3 from pipeline config!
+history_size: ${pipeline.history_size} # Automatically grabs 3 from pipeline config!
+goal_offset: ${pipeline.evaluator.goal_offset} # Automatically grabs 10 from pipeline config!
 img_size: ${pipeline.img_size} # Grabs from pipeline config, which can be overridden by config.yaml

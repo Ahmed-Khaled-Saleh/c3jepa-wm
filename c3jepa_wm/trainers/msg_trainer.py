@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'VQVAETrainer']
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #0503261c
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #dabc783a
 import torch
 import os
 from fastcore.utils import patch
@@ -16,7 +16,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 import hydra
 from pathlib import Path
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #c240000b
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #9e112c14
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -53,7 +53,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #831a70b2
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #83244c96
 class VQVAETrainer(BaseTrainer):
 
     def __init__(self, data_module, model, device, **kwargs):
@@ -165,7 +165,7 @@ class VQVAETrainer(BaseTrainer):
         )
 
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #d84549a8
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #00ef62a7
 @patch
 def checkpoint(self: VQVAETrainer, epoch, val_loss):
     checkpoint_state = {
