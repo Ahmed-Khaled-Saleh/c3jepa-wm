@@ -6,6 +6,13 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import wandb
 from dotenv import load_dotenv
+import gymnasium as gym
+import multigrid.envs
+
+env = gym.make('MultiGrid-FindGoal-15x15-v0', agents=2, render_mode='rgb_array', num_obstacles=6, width=15, height=15)
+
+
+
 
 from c3jepa_wm.utils import init_data, init_model, init_evaluator
 
@@ -25,7 +32,7 @@ def main(cfg: DictConfig):
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
-    device = torch.device("cuda") #if torch.cuda.is_available() else "cpu" #: remove for traiing on puhti
+    device = torch.device("cuda") if torch.cuda.is_available() else "cpu" #: remove for traiing on puhti
     print(f"Using runtime hardware device: {device}", flush=True)
 
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
@@ -57,7 +64,7 @@ def main(cfg: DictConfig):
 
     # --- 7. Execution Loop ---
     # evaluator.evaluate_dataset()
-    hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator)
+    hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator, env= env)
     
     wandb.finish()
 

@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule', 'WMDataModule', 'planning_collate_fn', 'PlanningDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #584ed5a7
+# %% ../../nbs/01c_data.data_module.ipynb #f670fe20
 import os
 
 import numpy as np
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset, MultiAgentWorldModelDataset, MultiAgentPlanningDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #ac4d43c0
+# %% ../../nbs/01c_data.data_module.ipynb #f6d8dd8f
 class DataModule:
     def __init__(self,
                  data_dir: str, 
@@ -102,7 +102,7 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #8ed9c632
+# %% ../../nbs/01c_data.data_module.ipynb #5cec30c5
 class VQDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -126,7 +126,7 @@ class VQDataModule(DataModule):
     
 
 
-# %% ../../nbs/01c_data.data_module.ipynb #496c09c3
+# %% ../../nbs/01c_data.data_module.ipynb #949f170f
 class WMDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -162,71 +162,34 @@ class WMDataModule(DataModule):
         )
         
 
-# %% ../../nbs/01c_data.data_module.ipynb #f1027630
+# %% ../../nbs/01c_data.data_module.ipynb #e52b63b0
 def planning_collate_fn(batch):
-    """
-    Collate variable-length episodes for MultiAgentPlanningDataset.
-
-    Pads each agent's "pixels", "action", "pov_seq_vqvae", "csi" along the
-    time dimension to the max length in the batch, and returns a "length"
-    tensor + boolean "mask" (True = real timestep, False = padding) so
-    downstream code can mask out padded steps.
-
-    Input: list of dicts, each shaped like one MultiAgentPlanningDataset item
-        {
-            "agent_0": {"pixels": (T_i, C, H, W), "action": (T_i,),
-                        "pov_seq_vqvae": (T_i, C, H, W), "csi": (T_i,)},
-            "agent_1": {...},
-            "episode_key": str,
-            "length": int,
-        }
-
-    Output:
-        {
-            "agent_0": {
-                "pixels": (B, T_max, C, H, W),
-                "action": (B, T_max),
-                "pov_seq_vqvae": (B, T_max, C, H, W),
-                "csi": (B, T_max),
-                "mask": (B, T_max) bool,
-            },
-            "agent_1": {...},
-            "episode_key": list[str],
-            "length": (B,) long,
-        }
-    """
     agent_keys = [k for k in batch[0].keys() if k.startswith("agent_")]
     lengths = torch.tensor([item["length"] for item in batch], dtype=torch.long)
     T_max = lengths.max().item()
-    B = len(batch)
 
     out = {
         "episode_key": [item["episode_key"] for item in batch],
+        "goal_pos": torch.stack([item["goal_pos"] for item in batch]),   # (B, 2)
+        "goal_obs": torch.stack([item["goal_obs"] for item in batch]),   # (B, ...)
         "length": lengths,
     }
-
     for agent_key in agent_keys:
-        sample = batch[0][agent_key]
-
         pixels = _pad_stack([item[agent_key]["pixels"] for item in batch], T_max)
         action = _pad_stack([item[agent_key]["action"] for item in batch], T_max)
         pov_vqvae = _pad_stack([item[agent_key]["pov_seq_vqvae"] for item in batch], T_max)
         csi = _pad_stack([item[agent_key]["csi"] for item in batch], T_max)
+        pos = _pad_stack([item[agent_key]["pos"] for item in batch], T_max)   # (B, T_max, 2)
+        dir_ = _pad_stack([item[agent_key]["dir"] for item in batch], T_max)  # (B, T_max)
+        success_at = torch.stack([item[agent_key]["success_at"] for item in batch])  # (B,) -- scalar per episode, plain stack
 
-        mask = torch.arange(T_max).unsqueeze(0) < lengths.unsqueeze(1)  # (B, T_max)
-        success_at = torch.tensor(
-        [item[agent_key]["success_at"] for item in batch], dtype=torch.long
-        )  # (B,)
+        mask = torch.arange(T_max).unsqueeze(0) < lengths.unsqueeze(1)
 
         out[agent_key] = {
-            "pixels": pixels,
-            "action": action,
-            "pov_seq_vqvae": pov_vqvae,
-            "csi": csi,
-            "mask": mask,
-            "success_at": success_at
+            "pixels": pixels, "action": action, "pov_seq_vqvae": pov_vqvae,
+            "csi": csi, "pos": pos, "dir": dir_, "mask": mask,
+            "success_at": success_at,
         }
-
     return out
 
 
@@ -242,7 +205,7 @@ def _pad_stack(tensors, T_max):
         padded.append(t)
     return torch.stack(padded, dim=0)
 
-# %% ../../nbs/01c_data.data_module.ipynb #ec5762da
+# %% ../../nbs/01c_data.data_module.ipynb #4dfb621c
 class PlanningDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 

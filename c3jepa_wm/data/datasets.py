@@ -243,26 +243,19 @@ class MultiAgentPlanningDataset(Dataset):
         self.max_length = max_length
         self.file = None
 
-        # with h5py.File(self.h5_path, "r") as f:
-        #     all_episodes = sorted(list(f.keys()))
-        #     num_episodes = len(all_episodes)
-        #     val_count = int(num_episodes * val_ratio)
-        #     train_count = num_episodes - val_count
-
-        #     self.episode_keys = (
-        #         all_episodes[:train_count] if self.split == "train" else all_episodes[train_count:]
-        #     )
         with h5py.File(self.h5_path, "r") as f:
             all_episodes = sorted(list(f.keys()))
+
             # drop episodes with degenerate (<= 0, or < min_length) success horizon
             valid_episodes = [
                 k for k in all_episodes
-                if np.min(f[k]["agents_success_at"]) >= min_length
+                if np.min(f[k]["agents_success_at"]) >= min_length and f[k]['agents_success_at'][0] > 0 and f[k]['agents_success_at'][1] > 0
             ]
             dropped = len(all_episodes) - len(valid_episodes)
             if dropped:
                 print(f"[MultiAgentPlanningDataset] dropped {dropped} degenerate episode(s) "
-                    f"with agents_success_at < {min_length}")
+                    f"with success_at < {min_length}")
+                
             num_episodes = len(valid_episodes)
             val_count = int(num_episodes * val_ratio)
             train_count = num_episodes - val_count
@@ -279,6 +272,8 @@ class MultiAgentPlanningDataset(Dataset):
         pov_seq = episode[f"{agent_id}_pov"][:length]       # (T, H, W, C)
         act_seq = episode[f"{agent_id}_act"][:length]        # (T,)
         csi_seq = episode[f"{agent_id}_csi"][:length]        # (T,) complex
+        pos_seq = episode[f"{agent_id}_pos"][:length]        # (T, 2) position
+        dir_seq = episode[f"{agent_id}_dir"][:length]        # (T,) direction
 
         if self.jepa_transform:
             pov_seq = torch.stack([self.jepa_transform(pov_seq[t]) for t in range(length)])  # (T, C, H, W)
@@ -288,7 +283,9 @@ class MultiAgentPlanningDataset(Dataset):
 
         act_seq = torch.tensor(act_seq, dtype=torch.long)  # (T,)
         csi_seq = torch.tensor(csi_seq, dtype=torch.complex64)  # (T,)
-        return pov_seq, act_seq, pov_seq_vqvae, csi_seq
+        pos_seq = torch.tensor(pos_seq, dtype=torch.long)  # (T, 2)
+        dir_seq = torch.tensor(dir_seq, dtype=torch.long)  # (T,)
+        return pov_seq, act_seq, pov_seq_vqvae, csi_seq, pos_seq, dir_seq
 
     def __getitem__(self, idx):
         if self.file is None:
@@ -296,17 +293,36 @@ class MultiAgentPlanningDataset(Dataset):
 
         episode_key = self.episode_keys[idx]
         episode = self.file[episode_key]
-        success_at = np.asarray(episode["agents_success_at"]) 
+
+        # success_at = np.asarray(episode["agents_success_at"]) 
         length = np.min(episode["agents_success_at"]).item()
+
         if self.max_length is not None:
             length = min(length, self.max_length)
 
-        out = {"episode_key": episode_key, "length": length, "success_at": success_at}
+        out = {
+            "episode_key": episode_key,
+            "length": length,
+            "goal_pos": torch.tensor(episode["goal_pos"], dtype=torch.long),
+            "goal_obs": torch.stack([
+                self.jepa_transform(episode["goal_obs"][i]) for i in range(len(self.agents))
+            ]),  # (n_agents, C, H, W),  
+        }
+
         for agent_id in self.agents:
-            pixels, action, pov_seq_vqvae, csi_seq = self._load_agent(episode, agent_id, length)
-            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action, "pov_seq_vqvae": pov_seq_vqvae, "csi": csi_seq,
-                                        "success_at": success_at
-                                        }
+            pixels, action, pov_seq_vqvae, csi_seq, pos_seq, dir_seq = self._load_agent(episode, agent_id, length)
+
+            info = {
+                        "pixels": pixels,
+                        "action": action,
+                        "pov_seq_vqvae": pov_seq_vqvae,
+                        "csi": csi_seq,
+                        "pos": pos_seq,
+                        "dir": dir_seq,
+                        "success_at": torch.tensor(episode['agents_success_at'][int(agent_id)], dtype=torch.long) # 
+                    }
+            
+            out[f"agent_{agent_id}"] = info
 
         return out
 

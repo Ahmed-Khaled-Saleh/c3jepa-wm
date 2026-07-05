@@ -1,7 +1,7 @@
 # configs/eval/datamodule/jepa_data.yaml
 _target_: c3jepa_wm.data.data_module.PlanningDataModule # Full python import path to your datamodule class
 
-batch_size: 128
+batch_size: 1 #128
 max_length: 150
 num_workers: 0
 history_size: ${pipeline.history_size} # Automatically grabs 3 from pipeline config!
