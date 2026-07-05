@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #628f36b4
+# %% ../../nbs/07_evaluators.control.ipynb #4071ebb4
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ import wandb
 from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #91539297
+# %% ../../nbs/07_evaluators.control.ipynb #c6ecbbb1
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -123,7 +123,7 @@ class MultiAgentGoalEvaluator:
         csi_t0 = episode[partner]["csi"][:, t0]#.unsqueeze(0)  # (1,) complex -- confirm this is the right link's CSI
         csi_t0 = csi_t0.to(self.device)
         print("Getting the power level and schedule for the channel...")
-        power_level, schedule = self._extract_power_and_schedule(csi_t0.to)
+        power_level, schedule = self._extract_power_and_schedule(csi_t0)
         print("Encoding message from partner's observation...")
         msg_indices = self._encode_message(
             partner_obs_vqvae_t0, csi_t0, schedule= schedule, power= power_level
@@ -226,7 +226,7 @@ class MultiAgentGoalEvaluator:
         return {"per_episode": all_results, "summary": summary}
     
 
-# %% ../../nbs/07_evaluators.control.ipynb #b5a06b60
+# %% ../../nbs/07_evaluators.control.ipynb #ce42bd7b
 @patch
 @torch.no_grad()
 def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
@@ -266,7 +266,7 @@ def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values
 
     return results
 
-# %% ../../nbs/07_evaluators.control.ipynb #b6467d07
+# %% ../../nbs/07_evaluators.control.ipynb #0ed4ce74
 @patch
 @torch.no_grad()
 def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
