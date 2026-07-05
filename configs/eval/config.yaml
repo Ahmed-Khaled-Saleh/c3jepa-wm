@@ -8,5 +8,5 @@ exp_params:
 
 logging_params:
   project_name: "planning_eval_2"
-  save_dir: "" #"/scratch/project_2009050/expirements/findgoal/logs"
-  ckp_dir: "" #"/scratch/project_2009050/expirements/findgoal/checkpoints" #"/home/ahmed/Downloads/"
+  save_dir: "/scratch/project_2009050/expirements/findgoal/logs"
+  ckp_dir: "/scratch/project_2009050/expirements/findgoal/checkpoints" #"/home/ahmed/Downloads/"
