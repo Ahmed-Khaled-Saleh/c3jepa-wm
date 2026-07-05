@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07_evaluators.control.ipynb #4071ebb4
+# %% ../../nbs/07_evaluators.control.ipynb #7335c48a
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ import wandb
 from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07_evaluators.control.ipynb #c6ecbbb1
+# %% ../../nbs/07_evaluators.control.ipynb #4720cfb6
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -226,19 +226,10 @@ class MultiAgentGoalEvaluator:
         return {"per_episode": all_results, "summary": summary}
     
 
-# %% ../../nbs/07_evaluators.control.ipynb #ce42bd7b
+# %% ../../nbs/07_evaluators.control.ipynb #e61010c3
 @patch
 @torch.no_grad()
 def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
-    """
-    Like evaluate_episode, but runs the planner at multiple t0 values across
-    the episode instead of a single random one, so you can track how goal
-    error evolves over the course of an episode.
-
-    t0_values: explicit list of t0s to evaluate; if None, generated via t0_stride
-               over the valid range [H-1, T-goal_offset-1].
-    Returns: {agent: {"t0": [...], "goal_error": [...]}}
-    """
     H = self.history_size
     T = episode[self.agents[0]]["pixels"].size(1)
     lo = H - 1
@@ -248,65 +239,93 @@ def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values
     if t0_values is None:
         t0_values = list(range(lo, hi + 1, t0_stride))
 
-    results = {agent: {"t0": [], "goal_error": []} for agent in self.agents}
+    results = {agent: {"t0": [], "goal_error": [], "gt_success_by_target": []} for agent in self.agents}
     for t0 in t0_values:
         for agent in self.agents:
             partner = [a for a in self.agents if a != agent][0]
             info = self._build_agent_info(episode, agent, partner, t0)
-            print("Planning for agent {} at t0={}".format(agent, t0))
             first_action, plan = self.planners[agent].plan(info)
-            print("planned actions for agent {} at t0={}".format(agent, t0))
-            goal_err = self.planners[agent].eval_plan(info, self.device, plan)  # (B,) or (B, D)
-            print("computing the goal ERR...")
+            goal_err = self.planners[agent].eval_plan(info, self.device, plan)
+
+            # Ground-truth statistic: had the recorded episode already reached its
+            # success condition by the target timestep (t0 + goal_offset)?
+            # NOTE: this reflects the *demonstration trajectory*, not the planner's
+            # own chosen actions -- it's a difficulty/context label, not a
+            # planner-success metric.
+            success_at = episode[agent]["success_at"]  # (B,)
+            target_t = t0 + self.goal_offset
+            gt_success = (success_at <= target_t)      # (B,) bool
 
             results[agent]["t0"].append(t0)
-            print("Appending goal error for agent {} at t0={}".format(agent, t0))
             results[agent]["goal_error"].append(goal_err.cpu())
-            print("finished evaluating agent {} at t0={}".format(agent, t0))
+            results[agent]["gt_success_by_target"].append(gt_success.cpu())
 
     return results
 
-# %% ../../nbs/07_evaluators.control.ipynb #0ed4ce74
+# %% ../../nbs/07_evaluators.control.ipynb #cf04a954
 @patch
 @torch.no_grad()
 def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
     dataset = self.data_module.val_dataloader()
 
-    # collect per-agent: {t0: [errors across episodes]}
+    # separate error accumulators for "already succeeded in demo by target time"
+    # vs "not yet succeeded" -- purely a data-driven stratification
     per_agent_t0_errors = {agent: defaultdict(list) for agent in self.agents}
+    per_agent_t0_errors_success = {agent: defaultdict(list) for agent in self.agents}
+    per_agent_t0_errors_pending = {agent: defaultdict(list) for agent in self.agents}
+    per_agent_t0_success_rate = {agent: defaultdict(list) for agent in self.agents}  # fraction succeeded, per t0
 
     for i, episode in enumerate(dataset):
         if num_episodes is not None and i >= num_episodes:
             break
         print(f"Evaluating episode {i} over time...")
         ep_res = self.evaluate_episode_over_time(episode, t0_stride=t0_stride)
-        print(f"Episode {i} evaluation complete. Aggregating results...")
-        # import ipdb; ipdb.set_trace()
-        for agent in self.agents:
-            for t0, err in zip(ep_res[agent]["t0"], ep_res[agent]["goal_error"]):
-                # err may be (B,) or (B, D) -- reduce to scalar per episode/t0 first
-                err_scalar = torch.norm(err, dim=-1).mean().item() if err.dim() > 1 else err.mean().item()
-                per_agent_t0_errors[agent][t0].append(err_scalar)
 
-    # build mean/std curves per agent
+        for agent in self.agents:
+            for t0, err, gt_success in zip(
+                ep_res[agent]["t0"], ep_res[agent]["goal_error"], ep_res[agent]["gt_success_by_target"]
+            ):
+                # err, gt_success are both (B,) here (or (B, D) for err) -- reduce per-episode-batch to scalars
+                err_per_sample = torch.norm(err, dim=-1) if err.dim() > 1 else err  # (B,)
+
+                per_agent_t0_errors[agent][t0].append(err_per_sample.mean().item())
+                per_agent_t0_success_rate[agent][t0].append(gt_success.float().mean().item())
+
+                succ_mask = gt_success
+                if succ_mask.any():
+                    per_agent_t0_errors_success[agent][t0].append(err_per_sample[succ_mask].mean().item())
+                if (~succ_mask).any():
+                    per_agent_t0_errors_pending[agent][t0].append(err_per_sample[~succ_mask].mean().item())
+
     curves = {}
     for agent in self.agents:
         t0s = sorted(per_agent_t0_errors[agent].keys())
-        means = [float(torch.tensor(per_agent_t0_errors[agent][t0]).mean()) for t0 in t0s]
-        stds = [float(torch.tensor(per_agent_t0_errors[agent][t0]).std()) for t0 in t0s]
-        curves[agent] = {"t0": t0s, "mean": means, "std": stds}
+        curves[agent] = {
+            "t0": t0s,
+            "mean": [float(torch.tensor(per_agent_t0_errors[agent][t0]).mean()) for t0 in t0s],
+            "std": [float(torch.tensor(per_agent_t0_errors[agent][t0]).std()) for t0 in t0s],
+            "gt_success_rate": [float(torch.tensor(per_agent_t0_success_rate[agent][t0]).mean()) for t0 in t0s],
+            "mean_when_gt_success": [
+                float(torch.tensor(v).mean()) if (v := per_agent_t0_errors_success[agent].get(t0, [])) else float("nan")
+                for t0 in t0s
+            ],
+            "mean_when_gt_pending": [
+                float(torch.tensor(v).mean()) if (v := per_agent_t0_errors_pending[agent].get(t0, [])) else float("nan")
+                for t0 in t0s
+            ],
+        }
 
-    # log as a wandb line plot -- one line per agent
     for agent in self.agents:
-        table = wandb.Table(
-            data=list(zip(curves[agent]["t0"], curves[agent]["mean"])),
-            columns=["t0", "mean_goal_error"],
-        )
+        c = curves[agent]
         wandb.log({
             f"eval/{agent}/goal_error_over_time": wandb.plot.line(
-                table, x="t0", y="mean_goal_error",
-                title=f"{agent} goal error vs t0",
-            )
+                wandb.Table(data=list(zip(c["t0"], c["mean"])), columns=["t0", "mean_goal_error"]),
+                x="t0", y="mean_goal_error", title=f"{agent} goal error vs t0",
+            ),
+            f"eval/{agent}/gt_success_rate_over_time": wandb.plot.line(
+                wandb.Table(data=list(zip(c["t0"], c["gt_success_rate"])), columns=["t0", "gt_success_rate"]),
+                x="t0", y="gt_success_rate", title=f"{agent} ground-truth demo success rate by target time",
+            ),
         })
 
     return curves

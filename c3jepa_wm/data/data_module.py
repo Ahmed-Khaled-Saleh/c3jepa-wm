@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['DataModule', 'VQDataModule', 'WMDataModule', 'planning_collate_fn', 'PlanningDataModule']
 
-# %% ../../nbs/01c_data.data_module.ipynb #d9016c26
+# %% ../../nbs/01c_data.data_module.ipynb #584ed5a7
 import os
 
 import numpy as np
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from .datasets import MultiAgentPOVDataset, MultiAgentWorldModelDataset, MultiAgentPlanningDataset
 from .transforms import get_transforms
 
-# %% ../../nbs/01c_data.data_module.ipynb #3b77a83a
+# %% ../../nbs/01c_data.data_module.ipynb #ac4d43c0
 class DataModule:
     def __init__(self,
                  data_dir: str, 
@@ -102,7 +102,7 @@ class DataModule:
         return colate_fn
     
 
-# %% ../../nbs/01c_data.data_module.ipynb #520de3d9
+# %% ../../nbs/01c_data.data_module.ipynb #8ed9c632
 class VQDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -126,7 +126,7 @@ class VQDataModule(DataModule):
     
 
 
-# %% ../../nbs/01c_data.data_module.ipynb #fbb14254
+# %% ../../nbs/01c_data.data_module.ipynb #496c09c3
 class WMDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 
@@ -162,7 +162,7 @@ class WMDataModule(DataModule):
         )
         
 
-# %% ../../nbs/01c_data.data_module.ipynb #9208b3fc
+# %% ../../nbs/01c_data.data_module.ipynb #f1027630
 def planning_collate_fn(batch):
     """
     Collate variable-length episodes for MultiAgentPlanningDataset.
@@ -214,6 +214,9 @@ def planning_collate_fn(batch):
         csi = _pad_stack([item[agent_key]["csi"] for item in batch], T_max)
 
         mask = torch.arange(T_max).unsqueeze(0) < lengths.unsqueeze(1)  # (B, T_max)
+        success_at = torch.tensor(
+        [item[agent_key]["success_at"] for item in batch], dtype=torch.long
+        )  # (B,)
 
         out[agent_key] = {
             "pixels": pixels,
@@ -221,6 +224,7 @@ def planning_collate_fn(batch):
             "pov_seq_vqvae": pov_vqvae,
             "csi": csi,
             "mask": mask,
+            "success_at": success_at
         }
 
     return out
@@ -238,7 +242,7 @@ def _pad_stack(tensors, T_max):
         padded.append(t)
     return torch.stack(padded, dim=0)
 
-# %% ../../nbs/01c_data.data_module.ipynb #2eecbc7b
+# %% ../../nbs/01c_data.data_module.ipynb #ec5762da
 class PlanningDataModule(DataModule):
     def __init__(self,
                  batch_size: int = 64, 

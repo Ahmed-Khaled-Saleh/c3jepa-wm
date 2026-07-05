@@ -296,15 +296,17 @@ class MultiAgentPlanningDataset(Dataset):
 
         episode_key = self.episode_keys[idx]
         episode = self.file[episode_key]
-
+        success_at = np.asarray(episode["agents_success_at"]) 
         length = np.min(episode["agents_success_at"]).item()
         if self.max_length is not None:
             length = min(length, self.max_length)
 
-        out = {"episode_key": episode_key, "length": length}
+        out = {"episode_key": episode_key, "length": length, "success_at": success_at}
         for agent_id in self.agents:
             pixels, action, pov_seq_vqvae, csi_seq = self._load_agent(episode, agent_id, length)
-            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action, "pov_seq_vqvae": pov_seq_vqvae, "csi": csi_seq}
+            out[f"agent_{agent_id}"] = {"pixels": pixels, "action": action, "pov_seq_vqvae": pov_seq_vqvae, "csi": csi_seq,
+                                        "success_at": success_at
+                                        }
 
         return out
 
