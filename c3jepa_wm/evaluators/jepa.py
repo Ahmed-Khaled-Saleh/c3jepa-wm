@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #6f33bddb
+# %% ../../nbs/07b_evaluators.jepa.ipynb #42bd3a0f
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -21,7 +21,7 @@ from ..utils import channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #a2f3bb32
+# %% ../../nbs/07b_evaluators.jepa.ipynb #b887a556
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -92,7 +92,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #f75f84c4
+# %% ../../nbs/07b_evaluators.jepa.ipynb #adf1af9e
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, schedule=None, power=None, no_comm=False):
@@ -123,7 +123,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #0e2bb0da
+# %% ../../nbs/07b_evaluators.jepa.ipynb #d669de71
 @patch
 def _extract_power_and_schedule(self: MultiAgentGoalEvaluator, csi):
     snr_linear = 10 ** (self.SNR / 10.0)
@@ -132,7 +132,7 @@ def _extract_power_and_schedule(self: MultiAgentGoalEvaluator, csi):
     return optimal_power, schedule
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #3bd26750
+# %% ../../nbs/07b_evaluators.jepa.ipynb #505e4b69
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     """Build a batched info dict for `agent` across a chunk of episodes.
@@ -159,7 +159,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
     }
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #db59740a
+# %% ../../nbs/07b_evaluators.jepa.ipynb #94c84255
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool: MultiAgentEnvPool, t0s, max_steps=150):
@@ -247,7 +247,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
                 cur_emb = enc["emb"][:, 0]
 
                 dist = F.mse_loss(cur_emb, goal_emb[agent][i:i + 1], reduction="none").sum(-1)
-                reached = tuple(pool.envs[i].unwrapped.agents[agent].state.pos) == tuple(goal_pos_list[i])
+                reached = tuple(pool.envs[i].env.unwrapped.agents[agent].state.pos) == tuple(goal_pos_list[i])
 
                 results[agent]["step"].append((i, real_step))
                 results[agent]["embedding_dist_to_goal"].append(dist.item())
@@ -271,7 +271,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
     return results
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #f6268ef5
+# %% ../../nbs/07b_evaluators.jepa.ipynb #f8a1021c
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
@@ -405,7 +405,7 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
 
 
 
-# %% ../../nbs/07b_evaluators.jepa.ipynb #48cea15b
+# %% ../../nbs/07b_evaluators.jepa.ipynb #5f608e45
 class _SubPool:
     """Thin view exposing only the first `n` env slots of a larger pool, for
     a short final chunk that doesn't fill the whole pool. Avoids rebuilding
