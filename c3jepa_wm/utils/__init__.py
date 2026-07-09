@@ -5,11 +5,11 @@
 # %% auto #0
 __all__ = ['init_data', 'init_model', 'init_trainer', 'init_evaluator', 'channel', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #3c96391e
+# %% ../../nbs/06a_utils.__init__.ipynb #658ac1ed
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #61cdcbd8
+# %% ../../nbs/06a_utils.__init__.ipynb #99a1a1ee
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -17,14 +17,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #3e7acef5
+# %% ../../nbs/06a_utils.__init__.ipynb #56bbc2f1
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #85379a46
+# %% ../../nbs/06a_utils.__init__.ipynb #9cdbf704
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -63,23 +63,57 @@ def init_model(cfg: DictConfig):
     
 
     elif stage == 3: # Evaluation stage
+
+        def get_ckp_path(model_name):
+            ckp_path = {
+            "jepa":
+                {
+                    "local": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/0_results/checkpoints/best_state_step_7_acc_-0.3554.pt",
+                    "puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_34741815/agent_vqvae_trainer/best_state_step_7_acc_-0.3554.pt"
+                },
+            "vqvae":
+                {
+                    "local": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/0_results/checkpoints/best_state_step_8_acc_-0.0057.pt",
+                    "puhti": "/scratch/project_2009050/expirements/findgoal/checkpoints/vqvae_pretraining/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt"
+                }
+            }
+            if model_name not in ckp_path:
+                raise ValueError(f"Unknown model name: {model_name}")
+            
+            for hostname, path in ckp_path[model_name].items():
+                if os.path.exists(path):
+                    print(f"Checkpoint path found for {model_name} on hostname: {hostname} in {path}")
+                    return path
+            
+            raise FileNotFoundError(f"No checkpoint path found for {model_name} on any known hostname.")
+        
+
         # Stage 2: Instantiate all three models independently
+        model_cfg.jepa.checkpoint_path = ""
+        model_cfg.vqvae.checkpoint_path = "" 
+
         models = {
             "jepa": hydra.utils.instantiate(model_cfg.jepa),
         }
 
-        if hasattr(model_cfg.jepa, "checkpoint_path") and model_cfg.jepa.checkpoint_path:
-            print(f"Loading pretrained JEPA weights from {model_cfg.jepa.checkpoint_path}")
-            checkpoint = torch.load(model_cfg.jepa.checkpoint_path, map_location="cpu")
-            models["jepa"].load_state_dict(checkpoint["wm_model_state_dict"])
+        # if hasattr(model_cfg.jepa, "checkpoint_path") and model_cfg.jepa.checkpoint_path:
+        ckpt_path = get_ckp_path("jepa")
+        model_cfg.jepa.checkpoint_path = ckpt_path
+        print(f"Loading pretrained JEPA weights from {model_cfg.jepa.checkpoint_path}")
+
+        checkpoint = torch.load(model_cfg.jepa.checkpoint_path, map_location="cpu")
+        models["jepa"].load_state_dict(checkpoint["wm_model_state_dict"])
         
         # Instantiate VQ-VAE, then immediately load its pretrained weights and freeze it
         vqvae = hydra.utils.instantiate(model_cfg.vqvae)
         
-        if hasattr(model_cfg.vqvae, "checkpoint_path") and model_cfg.vqvae.checkpoint_path:
-            print(f"Loading pretrained VQ-VAE weights from {model_cfg.vqvae.checkpoint_path}")
-            checkpoint = torch.load(model_cfg.vqvae.checkpoint_path, map_location="cpu")
-            vqvae.load_state_dict(checkpoint["model_state_dict"]) 
+        # if hasattr(model_cfg.vqvae, "checkpoint_path") and model_cfg.vqvae.checkpoint_path:
+        ckpt_path = get_ckp_path("vqvae")
+        model_cfg.vqvae.checkpoint_path = ckpt_path
+        print(f"Loading pretrained VQ-VAE weights from {model_cfg.vqvae.checkpoint_path}")
+
+        checkpoint = torch.load(model_cfg.vqvae.checkpoint_path, map_location="cpu")
+        vqvae.load_state_dict(checkpoint["model_state_dict"]) 
             
         # Freeze VQ-VAE because it's only used for getting latent codebooks
         vqvae.eval()
@@ -94,7 +128,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #4466b994
+# %% ../../nbs/06a_utils.__init__.ipynb #c73036b7
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -108,7 +142,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #741408f8
+# %% ../../nbs/06a_utils.__init__.ipynb #a880e9e2
 def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the evaluator and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -124,7 +158,7 @@ def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #3bc0b72b
+# %% ../../nbs/06a_utils.__init__.ipynb #33efe19f
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -207,7 +241,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #00b02ac8
+# %% ../../nbs/06a_utils.__init__.ipynb #3b24c36d
 class PhaseTransitionChecker:
     def __init__(
         self,

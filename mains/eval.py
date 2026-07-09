@@ -8,9 +8,10 @@ import wandb
 from dotenv import load_dotenv
 import gymnasium as gym
 import multigrid.envs
+from multigrid.wrappers.external import PettingZooWrapper
 
 env = gym.make('MultiGrid-FindGoal-15x15-v0', agents=2, render_mode='rgb_array', num_obstacles=6, width=15, height=15)
-
+make_env = lambda: PettingZooWrapper(env)#, render_mode='rgb_array', agent_view_size=5, max_cycles=150)
 
 
 
@@ -64,7 +65,7 @@ def main(cfg: DictConfig):
 
     # --- 7. Execution Loop ---
     # evaluator.evaluate_dataset()
-    hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator, env= env)
+    hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator, make_env= make_env)
     
     wandb.finish()
 
