@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #3ee574aa
+# %% ../../nbs/07c_evaluators.world_model.ipynb #b963fdf3
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -21,7 +21,7 @@ from ..utils import channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #48904956
+# %% ../../nbs/07c_evaluators.world_model.ipynb #71add582
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -93,7 +93,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #0b5cbfb9
+# %% ../../nbs/07c_evaluators.world_model.ipynb #7120c723
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, schedule=None, power=None, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #e821ae21
+# %% ../../nbs/07c_evaluators.world_model.ipynb #53adb65d
 @patch
 def _extract_power_and_schedule(self: MultiAgentGoalEvaluator, csi):
     snr_linear = 10 ** (self.SNR / 10.0)
@@ -133,7 +133,7 @@ def _extract_power_and_schedule(self: MultiAgentGoalEvaluator, csi):
     return optimal_power, schedule
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #189825a9
+# %% ../../nbs/07c_evaluators.world_model.ipynb #89696d7d
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     """Build a batched info dict for `agent` across a chunk of episodes.
@@ -161,7 +161,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #1dae8580
+# %% ../../nbs/07c_evaluators.world_model.ipynb #a2785b7f
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool: MultiAgentEnvPool, t0s, max_steps=150):
@@ -260,7 +260,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
                     [info[agent]["pixels"][i, 1:], frame[0]], dim=0
                 )
                 info[agent]["action"][i] = torch.cat(
-                    [info[agent]["action"][i, 1:], new_action].unsqueeze(1), dim=0
+                    [info[agent]["action"][i, 1:].unsqueeze(1), new_action], dim=0
                 ).squeeze()
 
                 if reached:
@@ -274,7 +274,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #e9e43a2b
+# %% ../../nbs/07c_evaluators.world_model.ipynb #ba3020d7
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],

@@ -35,16 +35,16 @@ evaluator:
   p_max: 10
   noise_power: 0.001
   device: "cuda"
-  budget: 5
+  budget: 150
 
 planner: 
   _target_: c3jepa_wm.planners.mpc.DiscreteCEMPlanner
   horizon: ${pipeline.history_size}
   history_size: ${pipeline.history_size}
   action_dim: 4
-  pop_size: 5
-  topk: 2
-  opt_steps: 3  
+  pop_size: 30
+  topk: 30
+  opt_steps: 30  
 
 
 eval_func:
