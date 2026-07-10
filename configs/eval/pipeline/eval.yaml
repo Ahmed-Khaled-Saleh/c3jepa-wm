@@ -28,24 +28,25 @@ model:
     checkpoint_path: ??? # "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_34741815/agent_vqvae_trainer/best_state_step_7_acc_-0.3554.pt"
 
 evaluator:
-  _target_: c3jepa_wm.evaluators.jepa.MultiAgentGoalEvaluator
+  _target_: c3jepa_wm.evaluators.world_model.MultiAgentGoalEvaluator
   history_size: ${pipeline.history_size} # Automatically grabs 3
   goal_offset: 10
   SNR: 10.0
   p_max: 10
   noise_power: 0.001
   device: "cuda"
+  budget: 5
 
 planner: 
-  _target_: c3jepa_wm.planners.mpc.JEPAGoalPlanner
+  _target_: c3jepa_wm.planners.mpc.DiscreteCEMPlanner
   horizon: ${pipeline.history_size}
   history_size: ${pipeline.history_size}
   action_dim: 4
-  pop_size: 300
-  topk: 30
-  opt_steps: 30  
+  pop_size: 5
+  topk: 2
+  opt_steps: 3  
 
 
 eval_func:
-  _target_: c3jepa_wm.evaluators.jepa.MultiAgentGoalEvaluator.evaluate_dataset_fixed_t0
-  num_episodes: 30
+  _target_: c3jepa_wm.evaluators.world_model.MultiAgentGoalEvaluator.evaluate_dataset_fixed_t0
+  num_episodes: 10

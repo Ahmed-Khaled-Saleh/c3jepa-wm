@@ -9,6 +9,7 @@ __all__ = ['JEPAGoalPlanner', 'DiscreteCEMPlanner']
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from fastcore.utils import patch
 
 # %% ../../nbs/09a_planners.mpc.ipynb #153f15c4
 class JEPAGoalPlanner:
@@ -101,35 +102,25 @@ class JEPAGoalPlanner:
         return final_cost
         
 
-# %% ../../nbs/09a_planners.mpc.ipynb #6c8a9f8d
-import torch
-import torch.nn.functional as F
-
-
+# %% ../../nbs/09a_planners.mpc.ipynb #fef06366
 class DiscreteCEMPlanner:
     """
     CEM-based planner for a JEPA-style dynamics model whose action encoder
     consumes raw integer indices (nn.Embedding), not one-hot vectors.
 
-    Improvements over the original implementation:
-      - Gumbel-max sampling instead of torch.multinomial (matches
-        CategoricalCEMSolver, vectorized, uses a seeded generator).
-      - Elitism anchor: the first sample each step is forced to the current
-        argmax action sequence ("mean candidate"), so the best-known plan is
-        always re-evaluated.
-      - Fully vectorized elite refit: no Python loops over batch or horizon.
-        One-hot is used ONLY over the small elite set (topk, not pop_size)
-        purely to compute frequency counts -- it is never passed to the model.
-      - Optional Laplace smoothing and EMA momentum on the probability update.
-      - info_dict is expanded across the sample dimension once, outside the
-        optimization loop, instead of being rebuilt every step.
-      - Candidates fed to model.get_cost remain raw long indices throughout,
-        matching what DiscreteActionEncoder expects.
+    `batch_size` mirrors `CEMSolver.batch_size`: it's a memory-bounding knob
+    for the CEM computation itself (candidate sampling + cost evaluation),
+    completely separate from how many episodes/envs the CALLER is driving.
+    The caller (evaluator/World) always passes the FULL batch; this planner
+    internally sub-chunks it for the optimization, exactly like
+    `CEMSolver.solve`'s `for start_idx in range(0, total_envs, self.batch_size)`
+    loop -- so callers no longer need to pre-chunk episodes themselves.
     """
 
     def __init__(self, model, action_dim=4, horizon=3, history_size=3,
                  pop_size=300, topk=30, opt_steps=30,
-                 smoothing=0.0, alpha=0.0, device='cpu', seed=1234):
+                 smoothing=0.0, alpha=0.0, batch_size=None,
+                 device='cpu', seed=0):
         self.model = model
         self.action_dim = action_dim
         self.horizon = horizon
@@ -139,121 +130,155 @@ class DiscreteCEMPlanner:
         self.opt_steps = opt_steps
         self.smoothing = smoothing
         self.alpha = alpha
+        # None => treat the whole incoming batch as a single chunk (same
+        # behavior as before this change). Set to an int to bound memory,
+        # exactly like CEMSolver.batch_size.
+        self.batch_size = batch_size
         self.device = device
         self.torch_gen = torch.Generator(device=device).manual_seed(seed)
+        
 
-    def _sample_actions(self, probs):
-        """
-        Gumbel-max sample of categorical action indices, with the first
-        sample forced to the current distribution's argmax (elitism anchor).
+# %% ../../nbs/09a_planners.mpc.ipynb #c98f79cd
+@patch
+def _sample_actions(self: DiscreteCEMPlanner, probs):
+    """
+    Gumbel-max sample of categorical action indices, with the first
+    sample forced to the current distribution's argmax (elitism anchor).
 
-        probs: (B, horizon, action_dim)
-        returns: indices (B, pop_size, horizon), long
-        """
-        B, H, A = probs.shape
-        log_probs = probs.clamp_min(1e-10).log()
-        log_probs = log_probs.unsqueeze(1).expand(B, self.pop_size, H, A)
+    probs: (B, horizon, action_dim)
+    returns: indices (B, pop_size, horizon), long
+    """
+    B, H, A = probs.shape
+    log_probs = probs.clamp_min(1e-10).log()
+    log_probs = log_probs.unsqueeze(1).expand(B, self.pop_size, H, A)
 
-        u = torch.rand(
-            log_probs.shape, generator=self.torch_gen,
-            device=self.device, dtype=probs.dtype,
-        ).clamp_min(1e-10)
-        gumbel = -(-u.log()).log()
+    u = torch.rand(
+        log_probs.shape, generator=self.torch_gen,
+        device=self.device, dtype=probs.dtype,
+    ).clamp_min(1e-10)
+    gumbel = -(-u.log()).log()
 
-        indices = (log_probs + gumbel).argmax(dim=-1)  # (B, S, H)
-        indices[:, 0] = probs.argmax(dim=-1)            # elitism anchor
-        return indices
+    indices = (log_probs + gumbel).argmax(dim=-1)  # (B, S, H)
+    indices[:, 0] = probs.argmax(dim=-1)            # elitism anchor
+    return indices
 
-    def _update_dist(self, cost, samples):
-        """
-        Vectorized elite refit (no Python loops over batch or horizon).
 
-        cost: (B, S) -- lower is better
-        samples: (B, S, H) -- raw action indices, long
-        returns: new_probs (B, H, action_dim)
-        """
-        B, S, H = samples.shape
-        A = self.action_dim
+# %% ../../nbs/09a_planners.mpc.ipynb #73dc367f
+@patch
+def _update_dist(self: DiscreteCEMPlanner, cost, samples):
+    """
+    Vectorized elite refit (no Python loops over batch or horizon).
 
-        # elites: lowest-cost candidates
-        _, topk_inds = torch.topk(cost, k=self.topk, dim=1, largest=False)
-        batch_idx = torch.arange(B, device=cost.device).unsqueeze(1).expand(-1, self.topk)
-        elites = samples[batch_idx, topk_inds]  # (B, topk, H)
+    cost: (B, S) -- lower is better
+    samples: (B, S, H) -- raw action indices, long
+    returns: new_probs (B, H, action_dim)
+    """
+    B, S, H = samples.shape
+    A = self.action_dim
 
-        # one-hot ONLY over the small elite set, purely for frequency counting
-        # (this is never fed to the model -- get_cost always sees raw indices)
-        elite_onehot = F.one_hot(elites, num_classes=A).float()  # (B, topk, H, A)
-        new_probs = elite_onehot.mean(dim=1)  # (B, H, A)
+    _, topk_inds = torch.topk(cost, k=self.topk, dim=1, largest=False)
+    batch_idx = torch.arange(B, device=cost.device).unsqueeze(1).expand(-1, self.topk)
+    elites = samples[batch_idx, topk_inds]  # (B, topk, H)
 
-        if self.smoothing > 0:
-            new_probs = new_probs + self.smoothing
-            new_probs = new_probs / new_probs.sum(dim=-1, keepdim=True)
+    elite_onehot = F.one_hot(elites, num_classes=A).float()  # (B, topk, H, A)
+    new_probs = elite_onehot.mean(dim=1)  # (B, H, A)
 
-        return new_probs
+    if self.smoothing > 0:
+        new_probs = new_probs + self.smoothing
+        new_probs = new_probs / new_probs.sum(dim=-1, keepdim=True)
 
-    @torch.no_grad()
-    def plan(self, info_dict, verbose=False):
-        """
-        info_dict must contain (per JEPA.get_cost / rollout requirements):
-          - pixels: (B, history_size, C, H, W)   recent observation history
-          - action: (B, history_size)            raw action indices for history
-          - goal:   (B, C, H, W)                  goal observation
-          - msg_indices (optional): (B, 1, 49)
+    return new_probs
 
-        Returns the first action of the best plan per batch element, plus the
-        full plan.
-        """
-        device = self.device
-        B = info_dict["pixels"].size(0)
-        probs = torch.full(
-            (B, self.horizon, self.action_dim), 1.0 / self.action_dim, device=device
+# %% ../../nbs/09a_planners.mpc.ipynb #b53423a2
+@patch
+def _plan_chunk(self: DiscreteCEMPlanner, chunk_info, verbose=False, chunk_label=""):
+    """Run the full CEM optimization for one already-sized chunk."""
+    cur_bs = chunk_info["pixels"].size(0)
+    probs = torch.full(
+        (cur_bs, self.horizon, self.action_dim), 1.0 / self.action_dim, device=self.device
+    )
+
+    cand_info = {
+        k: (v.unsqueeze(1).expand(cur_bs, self.pop_size, *v.shape[1:]).to(self.device)
+            if torch.is_tensor(v) else v)
+        for k, v in chunk_info.items()
+    }
+    hist_action = chunk_info["action"].unsqueeze(1).expand(
+        cur_bs, self.pop_size, *chunk_info["action"].shape[1:]
+    ).to(self.device)
+
+    for step in range(self.opt_steps):
+        samples = self._sample_actions(probs)  # (cur_bs, S, horizon), long
+        action_candidates = torch.cat([hist_action, samples], dim=2).long()
+
+        cost = self.model.get_cost(cand_info, action_candidates)  # (cur_bs, S)
+        new_probs = self._update_dist(cost, samples)
+
+        probs = (
+            self.alpha * probs + (1 - self.alpha) * new_probs
+            if self.alpha > 0 else new_probs
         )
 
-        # Expand info_dict (and history actions) across the sample dimension
-        # ONCE -- these don't change across optimization steps, unlike the
-        # sampled future actions.
-        cand_info = {
-            k: (v.unsqueeze(1).expand(B, self.pop_size, *v.shape[1:]).to(device)
-                if torch.is_tensor(v) else v)
-            for k, v in info_dict.items()
-        }
-        hist_action = info_dict["action"].unsqueeze(1).expand(
-            B, self.pop_size, *info_dict["action"].shape[1:]
-        ).to(device)
-
-        for step in range(self.opt_steps):
-            samples = self._sample_actions(probs)  # (B, S, horizon), long
-
-            # known history + sampled future actions, still raw indices
-            action_candidates = torch.cat([hist_action, samples], dim=2).long()
-
-            cost = self.model.get_cost(cand_info, action_candidates)  # (B, S)
-            new_probs = self._update_dist(cost, samples)
-
-            probs = (
-                self.alpha * probs + (1 - self.alpha) * new_probs
-                if self.alpha > 0 else new_probs
+        if verbose:
+            print(
+                f"[DiscreteCEMPlanner]{chunk_label} step {step + 1}/{self.opt_steps} "
+                f"mean elite cost: {cost.mean().item():.4f}"
             )
 
-            if verbose:
-                print(
-                    f"[DiscreteCEMPlanner] step {step + 1}/{self.opt_steps} "
-                    f"mean elite cost: {cost.mean().item():.4f}"
-                )
+    return probs
 
-        plan = torch.argmax(probs, dim=-1)  # (B, horizon)
-        first_action = plan[:, 0]
-        return first_action, plan
 
-    @torch.no_grad()
-    def eval_plan(self, info_dict, device, plan):
-        final_action_seq = torch.cat(
-            [info_dict["action"], plan], dim=1
-        ).unsqueeze(1).to(device).long()  # (B, 1, H+horizon)
+# %% ../../nbs/09a_planners.mpc.ipynb #1514092e
+@patch
+@torch.no_grad()
+def plan(self: DiscreteCEMPlanner, info_dict, verbose=False):
+    """
+    info_dict must contain (per JEPA.get_cost / rollout requirements):
+        - pixels: (B, history_size, C, H, W)   recent observation history
+        - action: (B, history_size)            raw action indices for history
+        - goal:   (B, C, H, W)                  goal observation
+        - msg_indices (optional): (B, 1, 49)
 
-        final_info = {
-            k: (v.unsqueeze(1).to(device) if torch.is_tensor(v) else v)
+    Callers pass the FULL batch B (e.g. all episodes being evaluated
+    together, mirroring World.num_envs) -- this method handles
+    memory-bounding internally via self.batch_size, so callers never
+    need to pre-chunk.
+
+    Returns the first action of the best plan per batch element, plus the
+    full plan.
+    """
+    B = info_dict["pixels"].size(0)
+    chunk_size = self.batch_size or B
+
+    probs_full = torch.empty(B, self.horizon, self.action_dim, device=self.device)
+
+    for start_idx in range(0, B, chunk_size):
+        end_idx = min(start_idx + chunk_size, B)
+        chunk_info = {
+            k: (v[start_idx:end_idx] if torch.is_tensor(v) else v)
             for k, v in info_dict.items()
         }
-        final_cost = self.model.get_cost(final_info, final_action_seq).squeeze(1)  # (B,)
-        return final_cost
+        probs_full[start_idx:end_idx] = self._plan_chunk(
+            chunk_info, verbose=verbose, chunk_label=f" chunk[{start_idx}:{end_idx}]"
+        )
+
+    plan = torch.argmax(probs_full, dim=-1)  # (B, horizon)
+    first_action = plan[:, 0]
+    return first_action, plan
+
+
+# %% ../../nbs/09a_planners.mpc.ipynb #f0cd9ced
+@patch
+@torch.no_grad()
+def eval_plan(self: DiscreteCEMPlanner, info_dict, device, plan):
+    final_action_seq = torch.cat(
+        [info_dict["action"], plan], dim=1
+    ).unsqueeze(1).to(device).long()  # (B, 1, H+horizon)
+
+    final_info = {
+        k: (v.unsqueeze(1).to(device) if torch.is_tensor(v) else v)
+        for k, v in info_dict.items()
+    }
+    final_cost = self.model.get_cost(final_info, final_action_seq).squeeze(1)  # (B,)
+    return final_cost
+
