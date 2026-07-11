@@ -6,20 +6,20 @@
 __all__ = ['modulate', 'SIGReg', 'DiscreteActionEncoder', 'FeedForward', 'Attention', 'MessageConditionedBlock',
            'ConditionalBlock', 'Block', 'Transformer', 'Embedder', 'MLP', 'ARPredictor', 'detach_clone', 'JEPA']
 
-# %% ../../nbs/02c_models.jepa.ipynb #f1f1a2c2
+# %% ../../nbs/02c_models.jepa.ipynb #c452d015
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #b520b07e
+# %% ../../nbs/02c_models.jepa.ipynb #ddc9c0a2
 def modulate(x, shift, scale):
     """AdaLN-zero modulation"""
     return x * (1 + scale) + shift
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #2d3d46f3
+# %% ../../nbs/02c_models.jepa.ipynb #32e05bb3
 class SIGReg(torch.nn.Module):
     """Sketch Isotropic Gaussian Regularizer (single-GPU!)"""
 
@@ -49,7 +49,7 @@ class SIGReg(torch.nn.Module):
         return statistic.mean() # average over projections and time
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #cb5afeb3
+# %% ../../nbs/02c_models.jepa.ipynb #624118ad
 class DiscreteActionEncoder(nn.Module):
     def __init__(self, num_actions, action_emb_dim):
         super().__init__()
@@ -63,7 +63,7 @@ class DiscreteActionEncoder(nn.Module):
         return self.embedding(action)
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #e850e984
+# %% ../../nbs/02c_models.jepa.ipynb #d3040569
 class FeedForward(nn.Module):
     """FeedForward network used in Transformers"""
 
@@ -82,7 +82,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #1b78b08e
+# %% ../../nbs/02c_models.jepa.ipynb #820e5cc2
 class Attention(nn.Module):
     """Scaled dot-product attention with causal masking"""
 
@@ -116,7 +116,7 @@ class Attention(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #a13989f3
+# %% ../../nbs/02c_models.jepa.ipynb #6f870d43
 class MessageConditionedBlock(nn.Module):
     """Transformer block with AdaLN-zero for actions + cross-attention for message"""
     
@@ -231,7 +231,7 @@ class MessageConditionedBlock(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #867396ed
+# %% ../../nbs/02c_models.jepa.ipynb #b7000453
 class ConditionalBlock(nn.Module):
     """Transformer block with AdaLN-zero conditioning"""
 
@@ -259,7 +259,7 @@ class ConditionalBlock(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #6d0d78ae
+# %% ../../nbs/02c_models.jepa.ipynb #be6647de
 class Block(nn.Module):
     """Standard Transformer block"""
 
@@ -278,7 +278,7 @@ class Block(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #adbf00bc
+# %% ../../nbs/02c_models.jepa.ipynb #90cf179a
 class Transformer(nn.Module):
     """Standard Transformer with support for AdaLN-zero blocks"""
 
@@ -361,7 +361,7 @@ class Transformer(nn.Module):
         return x
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #82120fbb
+# %% ../../nbs/02c_models.jepa.ipynb #709d6bee
 class Embedder(nn.Module):
     def __init__(
         self,
@@ -391,7 +391,7 @@ class Embedder(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #f64d1cf3
+# %% ../../nbs/02c_models.jepa.ipynb #38114b36
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
@@ -420,7 +420,7 @@ class MLP(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #f5a96aba
+# %% ../../nbs/02c_models.jepa.ipynb #cc2d6ea6
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -493,7 +493,7 @@ class ARPredictor(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #8e14f472
+# %% ../../nbs/02c_models.jepa.ipynb #c5b2a18d
 """JEPA Implementation"""
 
 def detach_clone(v):

@@ -49,4 +49,4 @@ planner:
 
 eval_func:
   _target_: c3jepa_wm.evaluators.world_model.MultiAgentGoalEvaluator.evaluate_dataset_fixed_t0
-  num_episodes: 10
+  num_episodes: 100
