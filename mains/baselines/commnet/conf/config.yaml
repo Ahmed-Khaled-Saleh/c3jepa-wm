@@ -1,0 +1,25 @@
+# Composes the structured TrainConfig schema (registered in train.py via
+# ConfigStore under "base_schema") so every field is discoverable, typed,
+# and overridable from the CLI, e.g.:
+#
+#   python train.py num_envs=16 episode_len=60
+#   python train.py env.num_agents=6 hidden_dim=256
+#   python train.py -m lr=1e-4,3e-4,1e-3          # multirun sweep
+#   python train.py device=cpu total_updates=100  # quick smoke test
+#
+defaults:
+  - base_schema
+  - _self_
+
+# Any field can be overridden here directly instead of (or in addition to)
+# the CLI, e.g.:
+# num_envs: 16
+# episode_len: 60
+# env:
+#   num_agents: 6
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
