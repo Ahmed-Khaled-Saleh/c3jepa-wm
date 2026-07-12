@@ -160,6 +160,8 @@ checklink/cookies.txt
 *.npz
 *.csv
 *.h5
+*.pt
+*.pth
 
 *.png
 *.pdf

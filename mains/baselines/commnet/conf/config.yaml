@@ -2,11 +2,17 @@
 # ConfigStore under "base_schema") so every field is discoverable, typed,
 # and overridable from the CLI, e.g.:
 #
-#   python train.py num_envs=16 episode_len=60
+#   python train.py num_envs=16 episode_len=150 env.max_steps=150
 #   python train.py env.num_agents=6 hidden_dim=256
-#   python train.py -m lr=1e-4,3e-4,1e-3          # multirun sweep
-#   python train.py device=cpu total_updates=100  # quick smoke test
+#   python train.py env.joint_reward=false          # per-agent-only reward instead
+#   python train.py -m lr=1e-4,3e-4,1e-3             # multirun sweep
+#   python train.py device=cpu total_updates=100     # quick smoke test
 #
+# NOTE: episode_len and env.max_steps must be kept equal (train()/evaluate()
+# both assert this at startup) -- the outer loop's step budget and the env's
+# own internal truncation limit (which _reward()'s time-decay is computed
+# against) have to agree, or episodes get cut short before the env itself
+# ever gets a fair chance to finish.
 defaults:
   - base_schema
   - _self_
@@ -14,7 +20,6 @@ defaults:
 # Any field can be overridden here directly instead of (or in addition to)
 # the CLI, e.g.:
 # num_envs: 16
-# episode_len: 60
 # env:
 #   num_agents: 6
 

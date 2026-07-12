@@ -241,11 +241,26 @@ def compute_reinforce_loss(model: CommNetAgent, buf: RolloutBuffer, cfg: "TrainC
 @dataclass
 class EnvConfig:
     num_agents: int = 2
-    num_actions: int = 4      # e.g. {up, down, left, right, stay/toggle}
+    num_actions: int = 4      # NavigationAction: {left, right, forward, done}
     view_size: int = 7        # agent's egocentric grid window (7x7 cells)
     tile_size: int = 32       # pixels/cell -> 7*32 = 224, matching ViT-Tiny's input res
     obs_key: str = "pov"      # key holding the RGB frame in each agent's obs dict (FindGoalEnv.gen_obs)
-    noop_action: int = 3      # action substituted for agents no longer live in a given env
+    noop_action: int = 3      # action substituted for agents no longer live in a given env (NavigationAction.done, a genuine no-op)
+    num_obstacles: int = 6
+    width: int = 15
+    height: int = 15
+    max_steps: int = 150      # passed straight through to gym.make(...) -- the env's OWN truncation
+                               # limit and _reward()'s time-decay denominator both key off this.
+                               # cfg.episode_len (below) must match it, or the outer training/eval
+                               # loop cuts episodes off before the env itself ever gets a chance to
+                               # truncate -- see the max_steps/episode_len mismatch discussed in chat.
+    joint_reward: bool = True  # on_success() gives _reward() to ALL agents once ANY agent reaches
+                                # the goal, instead of only the agent that reached it. Termination
+                                # stays per-agent (success_termination_mode='all' in FindGoalEnv, i.e.
+                                # unaffected by this flag) -- so the coordination requirement (every
+                                # agent must still individually walk onto the goal) is unchanged; only
+                                # reward density changes, converting "one agent already reaches the
+                                # goal in most episodes" into training signal for BOTH agents.
 
 
 @dataclass
@@ -258,7 +273,8 @@ class TrainConfig:
     tie_weights: bool = False
     freeze_encoder: bool = False
 
-    episode_len: int = 40     # T: max episode length (buffer holds one full episode/env)
+    episode_len: int = 150    # T: max episode length (buffer holds one full episode/env).
+                               # Must match cfg.env.max_steps -- see EnvConfig.max_steps comment.
     total_updates: int = 10_000
     gamma: float = 1.0        # paper does NOT discount within an episode
     lr: float = 3e-4
@@ -272,7 +288,7 @@ class TrainConfig:
     project_name: str = "commnet"  # for wandb logging
 
     checkpoint_every: int = 200   # save a periodic checkpoint every N updates (0 disables periodic saves)
-    checkpoint_dir: str = "commnet_checkpoints"  # relative to this run's Hydra output dir
+    checkpoint_dir: str = "checkpoints"  # relative to this run's Hydra output dir
     save_best: bool = True        # additionally track+overwrite a best.pt by mean_return
 
     eval_every: int = 200         # run evaluate() every N updates during training (0 disables)
@@ -289,33 +305,57 @@ cs.store(name="base_schema", node=TrainConfig)
 # --------------------------------------------------------------------------
 def make_env_fn(env_cfg: EnvConfig):
     """
-    Returns a zero-arg factory that builds one PettingZoo-wrapped MultiGrid
-    goal-configuration env instance, with `env_cfg.num_agents` agents, an
+    Returns a zero-arg factory that builds one PettingZoo-wrapped
+    `FindGoalEnv` instance, with `env_cfg.num_agents` agents, an
     `env_cfg.view_size` x `env_cfg.view_size` egocentric view rendered at
     `env_cfg.tile_size` px/cell (so `view_size * tile_size == 224`).
 
-    Example (pseudo-code, adapt import/class name to your installed pkg):
-
-        from multigrid.envs import GoalConfigEnv
-        from your_project.utils.env_utils import PettingZooWrapper
-
-        def _make():
-            env = GoalConfigEnv(
-                num_agents=env_cfg.num_agents,
-                agent_view_size=env_cfg.view_size,
-                tile_size=env_cfg.tile_size,
-                render_mode="rgb_array",
-            )
-            return PettingZooWrapper(env)
-        return _make
+    `max_steps`/`joint_reward` are passed straight through from
+    `env_cfg` rather than hardcoded, so they can't silently drift out of
+    sync with `cfg.episode_len` the way they did before (the env's own
+    truncation limit and `_reward()`'s time-decay both key off
+    `max_steps`; see `EnvConfig.max_steps`'s docstring comment).
     """
     import gymnasium as gym
     import multigrid.envs
     from multigrid.wrappers.external import PettingZooWrapper
 
-    env = gym.make('MultiGrid-FindGoal-15x15-v0', agents=2, render_mode='rgb_array', num_obstacles=6, width=15, height=15)
-    make_env = lambda: PettingZooWrapper(env)#, render_mode='rgb_array', agent_view_size=5, max_cycles=150)
-    return make_env
+    def _make():
+        env = gym.make(
+            'MultiGrid-FindGoal-15x15-v0',
+            agents=env_cfg.num_agents,
+            render_mode='rgb_array',
+            num_obstacles=env_cfg.num_obstacles,
+            width=env_cfg.width,
+            height=env_cfg.height,
+            max_steps=env_cfg.max_steps,
+            joint_reward=env_cfg.joint_reward,
+        )
+        return PettingZooWrapper(env)
+    return _make
+
+
+def _validate_episode_budget(cfg: TrainConfig) -> None:
+    """
+    cfg.episode_len (the outer training/eval loop's step budget) and
+    cfg.env.max_steps (the env's own internal truncation limit, passed to
+    gym.make in make_env_fn) must match. If the outer loop's budget is
+    smaller, episodes get cut off before the env itself ever gets a
+    chance to truncate or for agents to reach a goal that's genuinely far
+    away -- this is exactly what silently happened before (episode_len=40
+    vs. the env's default max_steps=250), and reward/success metrics from
+    a mismatched run aren't a fair read on the policy.
+    """
+    if cfg.episode_len != cfg.env.max_steps:
+        raise ValueError(
+            f"cfg.episode_len ({cfg.episode_len}) != cfg.env.max_steps "
+            f"({cfg.env.max_steps}) -- the outer loop's step budget must "
+            f"match the env's own internal max_steps, or episodes get cut "
+            f"off before the env (and _reward()'s time-decay, which is "
+            f"computed against env.max_steps) ever sees the full horizon "
+            f"it was configured for. Set them equal, e.g. via "
+            f"`python train.py episode_len=150 env.max_steps=150`."
+        )
 
 
 # --------------------------------------------------------------------------
@@ -391,6 +431,7 @@ def evaluate(model: CommNetAgent, cfg: TrainConfig, num_episodes: int,
     num_episodes, and the raw per-episode arrays (successes, returns,
     lengths) for further analysis (e.g. a histogram in a notebook).
     """
+    _validate_episode_budget(cfg)
     device = device or torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if cfg.device == "auto" else cfg.device
     )
@@ -403,7 +444,7 @@ def evaluate(model: CommNetAgent, cfg: TrainConfig, num_episodes: int,
         pool = MultiAgentEnvPool(env_fns)
     adapter = MultiGridPoolAdapter(pool, obs_key=cfg.env.obs_key, noop_action=cfg.env.noop_action)
 
-    successes, returns, lengths = [], [], []
+    successes, any_goal, ended_early, returns, lengths = [], [], [], [], []
     batch_idx = 0
     try:
         while len(successes) < num_episodes:
@@ -440,13 +481,34 @@ def evaluate(model: CommNetAgent, cfg: TrainConfig, num_episodes: int,
                 if env_finished.all():
                     break
 
-            # success iff every agent's own episode-end was a termination
-            # (reached goal) and none were truncations (timed out); an env
-            # that never finished within episode_len is a failure too.
+            # Strict success: every agent's own episode-end was a
+            # termination (reached goal), none were truncations (timed
+            # out). This is what "success" should mean, but relies on the
+            # env/wrapper never setting truncated=True alongside
+            # terminated=True at genuine episode end -- some TimeLimit-
+            # style wrappers do exactly that to signal "definitely over"
+            # regardless of cause, which would make this always False even
+            # on real successes. The two looser diagnostics below let you
+            # tell that apart from "the agent genuinely never reaches the
+            # goal" without touching the env:
             env_success = ever_terminated.all(axis=1) & ~ever_truncated.any(axis=1) & env_finished
+            # at least one agent's terminated fired at some point, ignoring
+            # truncated entirely -- if this is >0 while env_success stays
+            # exactly 0, the strict criterion above is almost certainly
+            # over-filtering (truncated/terminated co-occurring), not a
+            # "never reaches the goal" problem.
+            env_any_goal = ever_terminated.any(axis=1)
+            # episode ended strictly before the outer step budget, for any
+            # reason -- if this is also ~0, the agent isn't finishing
+            # early at all (consistent with episode_len being too short
+            # for the grid, or the agent just wandering for the full
+            # budget every episode).
+            env_ended_early = episode_length < cfg.episode_len
 
             n_new = min(cfg.num_envs, num_episodes - len(successes))
             successes.extend(env_success[:n_new].tolist())
+            any_goal.extend(env_any_goal[:n_new].tolist())
+            ended_early.extend(env_ended_early[:n_new].tolist())
             returns.extend(episode_return[:n_new].tolist())
             lengths.extend(episode_length[:n_new].tolist())
             batch_idx += 1
@@ -456,10 +518,14 @@ def evaluate(model: CommNetAgent, cfg: TrainConfig, num_episodes: int,
         model.train(was_training)
 
     successes_arr = np.array(successes, dtype=bool)
+    any_goal_arr = np.array(any_goal, dtype=bool)
+    ended_early_arr = np.array(ended_early, dtype=bool)
     returns_arr = np.array(returns, dtype=np.float32)
     lengths_arr = np.array(lengths, dtype=np.float32)
     return {
         "success_rate": float(successes_arr.mean()),
+        "any_goal_reached_rate": float(any_goal_arr.mean()),   # diagnostic, see comment above
+        "ended_early_rate": float(ended_early_arr.mean()),     # diagnostic, see comment above
         "mean_return": float(returns_arr.mean()),
         "mean_episode_length": float(lengths_arr.mean()),
         "num_episodes": int(len(successes_arr)),
@@ -482,6 +548,7 @@ def train(cfg: TrainConfig):
     auto-reset on done, so explicit reset-per-update is the correct (and
     only) way to get clean episode boundaries here.
     """
+    _validate_episode_budget(cfg)
     device = torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if cfg.device == "auto" else cfg.device
     )
@@ -495,7 +562,7 @@ def train(cfg: TrainConfig):
     run_dir = Path(HydraConfig.get().runtime.output_dir)
     ckpt_dir = run_dir / cfg.checkpoint_dir
     best_mean_return = float("-inf")
-    best_success_rate = float("-inf")
+    best_eval_score = float("-inf")
 
     env_fns = [lambda: make_env_fn(cfg.env)() for _ in range(cfg.num_envs)]
     pool = MultiAgentEnvPool(env_fns)
@@ -578,16 +645,31 @@ def train(cfg: TrainConfig):
                                    deterministic=cfg.eval_deterministic, device=device)
             wandb.log({
                 "eval/success_rate": eval_stats["success_rate"],
+                "eval/any_goal_reached_rate": eval_stats["any_goal_reached_rate"],
+                "eval/ended_early_rate": eval_stats["ended_early_rate"],
                 "eval/mean_return": eval_stats["mean_return"],
                 "eval/mean_episode_length": eval_stats["mean_episode_length"],
             }, step=update)
             print(f"  [eval @ {update}] success_rate {eval_stats['success_rate']:.3f} | "
+                  f"any_goal {eval_stats['any_goal_reached_rate']:.3f} | "
+                  f"ended_early {eval_stats['ended_early_rate']:.3f} | "
                   f"mean_return {eval_stats['mean_return']:.3f} | "
                   f"mean_len {eval_stats['mean_episode_length']:.1f} "
                   f"({eval_stats['num_episodes']} episodes)")
 
-            if eval_stats["success_rate"] > best_success_rate:
-                best_success_rate = eval_stats["success_rate"]
+            # Composite score, not raw success_rate: while success_rate is
+            # genuinely 0 everywhere (as it can be for a long time on a
+            # hard coordination task), comparing "0.0 > 0.0" never fires
+            # again after the very first eval call (which trivially beats
+            # the initial -inf) -- silently freezing best_eval.pt on a
+            # near-random early snapshot forever. Blending in
+            # any_goal_reached_rate as a tie-breaker means a later
+            # checkpoint that's clearly more competent (even if still not
+            # fully succeeding) can still displace an earlier weaker one;
+            # success_rate still dominates the score once it's nonzero.
+            eval_score = eval_stats["success_rate"] + 0.01 * eval_stats["any_goal_reached_rate"]
+            if eval_score >= best_eval_score:
+                best_eval_score = eval_score
                 save_checkpoint(ckpt_dir / "best_eval.pt", model, optimizer, cfg,
                                  update, eval_stats["success_rate"])
 
@@ -610,10 +692,14 @@ def train(cfg: TrainConfig):
                            deterministic=cfg.eval_deterministic, device=device)
     wandb.log({
         "eval/success_rate": final_eval["success_rate"],
+        "eval/any_goal_reached_rate": final_eval["any_goal_reached_rate"],
+        "eval/ended_early_rate": final_eval["ended_early_rate"],
         "eval/mean_return": final_eval["mean_return"],
         "eval/mean_episode_length": final_eval["mean_episode_length"],
     }, step=cfg.total_updates - 1)
     print(f"[final eval] success_rate {final_eval['success_rate']:.3f} | "
+          f"any_goal {final_eval['any_goal_reached_rate']:.3f} | "
+          f"ended_early {final_eval['ended_early_rate']:.3f} | "
           f"mean_return {final_eval['mean_return']:.3f} | "
           f"mean_len {final_eval['mean_episode_length']:.1f} "
           f"({final_eval['num_episodes']} episodes)")
