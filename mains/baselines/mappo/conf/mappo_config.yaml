@@ -1,0 +1,19 @@
+# Composes the structured MAPPOConfig schema (registered in train_mappo.py
+# via ConfigStore under "mappo_schema"). Override anything from the CLI:
+#
+#   python train_mappo.py num_envs=16
+#   python train_mappo.py env.num_agents=6 hidden_dim=256
+#   python train_mappo.py env.joint_reward=false
+#   python train_mappo.py -m lr=1e-4,3e-4,1e-3
+#
+# NOTE: episode_len and env.max_steps must be kept equal, same as train.py
+# (see train.py's _validate_episode_budget, reused here).
+defaults:
+  - mappo_schema
+  - _self_
+
+hydra:
+  run:
+    dir: outputs_mappo/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
