@@ -7,7 +7,7 @@ defaults:
   - /model@model.critic: critic
   - _self_
 
-# stage: 2
+stage: 0
 
 # Define Stage 2 specific hyperparameters here
 # lr: 1e-4
