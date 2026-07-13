@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import hydra
@@ -39,26 +38,22 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.utils.checkpoint
 from hydra.core.config_store import ConfigStore
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 import wandb
-from model import CommNetActorCritic
 from rollout import RolloutBuffer
-# --- Adjust this import to wherever MultiAgentEnvPool actually lives in
-# --- your codebase (e.g. the nbdev-exported module). It's used as-is; we
-# --- don't redefine it here.
-from c3jepa_wm.utils.env_utils import MultiAgentEnvPool  # noqa: E402
-from stable_pretraining.backbone.utils import vit_hf
 
-import torchvision.transforms.v2 as v2
-import torch.nn.functional as F
+from c3jepa_wm.utils.env_utils import MultiAgentEnvPool
 
-img_transform = v2.Compose([
-                v2.ToImage(),
-                v2.ToDtype(torch.float32, scale=True),
-                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
+from cfg import TrainConfig
+from module import CommNetAgent
+from utils import *
+
+cs = ConfigStore.instance()
+cs.store(name="base_schema", node=TrainConfig)
+
 # --------------------------------------------------------------------------
 # Tensor-shaped adapter around MultiAgentEnvPool.
 # --------------------------------------------------------------------------
@@ -151,54 +146,11 @@ class MultiGridPoolAdapter:
         obs = self._stack_obs(stacked_infos)
         return obs, rewards_arr, done_env, agent_alive, term_arr, trunc_arr
 
-# --------------------------------------------------------------------------
-# Model wrapper: encoder + CommNet in one module for convenience.
-# --------------------------------------------------------------------------
-class CommNetAgent(nn.Module):
-    def __init__(self, hidden_dim: int, num_actions: int, num_comm_steps: int,
-                 tie_weights: bool, freeze_encoder: bool):
-        super().__init__()
-        # self.encoder = ViTTinyEncoder(out_dim=hidden_dim, freeze_backbone=freeze_encoder)
-        self.encoder = vit_hf(
-                            size="tiny",
-                            patch_size=14,
-                            image_size=224,
-                            pretrained=False,
-                            use_mask_token=True,
-                        )
-        self.processor = img_transform
-
-        self.commnet = CommNetActorCritic(
-            hidden_dim=hidden_dim,
-            num_actions=num_actions,
-            num_comm_steps=num_comm_steps,
-            tie_weights=tie_weights,
-        )
-
-    def encode(self, obs_uint8: torch.Tensor) -> torch.Tensor:
-        """obs_uint8: (B, N, 224, 224, 3) -> (B, N, hidden_dim)"""
-        B, N = obs_uint8.shape[:2]
-        x = obs_uint8.movedim(-1, -3) # since we pass a tensor to transform, we need to move the channel dimension to the front manually
-        x = self.processor(x)          # (B, N, 3, 224, 224)
-        x = x.reshape(B * N, *x.shape[2:])                  # encoder applied per-agent
-        feats = self.encoder(x)                             # (B*N, hidden_dim)
-        feats = feats['last_hidden_state'][:, 0]
-        return feats.reshape(B, N, -1)
-
-    def forward(self, obs_uint8: torch.Tensor, mask=None):
-        h0 = self.encode(obs_uint8)
-        return self.commnet(h0, mask)
-
-    @torch.no_grad()
-    def act(self, obs_uint8: torch.Tensor, mask=None, deterministic=False):
-        h0 = self.encode(obs_uint8)
-        return self.commnet.act(h0, mask, deterministic)
-
 
 # --------------------------------------------------------------------------
 # Loss: paper-exact REINFORCE + baseline (Appendix A, Eq. 7).
 # --------------------------------------------------------------------------
-def compute_reinforce_loss(model: CommNetAgent, buf: RolloutBuffer, cfg: "TrainConfig"):
+def compute_reinforce_loss(model: CommNetAgent, buf: RolloutBuffer, cfg: TrainConfig):
     """
     `buf` must hold one full (terminated or max-length-truncated) episode
     per env -- no bootstrapping is used, unlike A2C/GAE.
@@ -233,166 +185,6 @@ def compute_reinforce_loss(model: CommNetAgent, buf: RolloutBuffer, cfg: "TrainC
         "mean_return": returns[buf.alive_mask].mean().item() if denom > 0 else 0.0,
     }
     return total_loss, stats
-
-
-# --------------------------------------------------------------------------
-# Config (Hydra structured config).
-# --------------------------------------------------------------------------
-@dataclass
-class EnvConfig:
-    num_agents: int = 2
-    num_actions: int = 4      # NavigationAction: {left, right, forward, done}
-    view_size: int = 7        # agent's egocentric grid window (7x7 cells)
-    tile_size: int = 32       # pixels/cell -> 7*32 = 224, matching ViT-Tiny's input res
-    obs_key: str = "pov"      # key holding the RGB frame in each agent's obs dict (FindGoalEnv.gen_obs)
-    noop_action: int = 3      # action substituted for agents no longer live in a given env (NavigationAction.done, a genuine no-op)
-    num_obstacles: int = 6
-    width: int = 15
-    height: int = 15
-    max_steps: int = 150      # passed straight through to gym.make(...) -- the env's OWN truncation
-                               # limit and _reward()'s time-decay denominator both key off this.
-                               # cfg.episode_len (below) must match it, or the outer training/eval
-                               # loop cuts episodes off before the env itself ever gets a chance to
-                               # truncate -- see the max_steps/episode_len mismatch discussed in chat.
-    joint_reward: bool = True  # on_success() gives _reward() to ALL agents once ANY agent reaches
-                                # the goal, instead of only the agent that reached it. Termination
-                                # stays per-agent (success_termination_mode='all' in FindGoalEnv, i.e.
-                                # unaffected by this flag) -- so the coordination requirement (every
-                                # agent must still individually walk onto the goal) is unchanged; only
-                                # reward density changes, converting "one agent already reaches the
-                                # goal in most episodes" into training signal for BOTH agents.
-
-
-@dataclass
-class TrainConfig:
-    env: EnvConfig = field(default_factory=EnvConfig)
-
-    num_envs: int = 8         # number of parallel episodes (pool size)
-    hidden_dim: int = 192
-    num_comm_steps: int = 2
-    tie_weights: bool = False
-    freeze_encoder: bool = False
-
-    episode_len: int = 150    # T: max episode length (buffer holds one full episode/env).
-                               # Must match cfg.env.max_steps -- see EnvConfig.max_steps comment.
-    total_updates: int = 10_000
-    gamma: float = 1.0        # paper does NOT discount within an episode
-    lr: float = 3e-4
-    baseline_coef: float = 0.03   # paper's alpha (Appendix A, Eq. 7)
-    entropy_coef: float = 0.0     # paper does not use an entropy bonus; opt in if you want one
-    max_grad_norm: float = 0.5
-
-    device: str = "auto"      # "auto" | "cuda" | "cpu"
-    seed: int | None = None
-    log_every: int = 10
-    project_name: str = "commnet"  # for wandb logging
-
-    checkpoint_every: int = 200   # save a periodic checkpoint every N updates (0 disables periodic saves)
-    checkpoint_dir: str = "checkpoints"  # relative to this run's Hydra output dir
-    save_best: bool = True        # additionally track+overwrite a best.pt by mean_return
-
-    eval_every: int = 200         # run evaluate() every N updates during training (0 disables)
-    eval_episodes: int = 20       # episodes per evaluate() call
-    eval_deterministic: bool = True  # argmax actions during eval instead of sampling
-
-
-cs = ConfigStore.instance()
-cs.store(name="base_schema", node=TrainConfig)
-
-
-# --------------------------------------------------------------------------
-# Env construction -- adapt to your actual MultiGrid + PettingZooWrapper.
-# --------------------------------------------------------------------------
-def make_env_fn(env_cfg: EnvConfig):
-    """
-    Returns a zero-arg factory that builds one PettingZoo-wrapped
-    `FindGoalEnv` instance, with `env_cfg.num_agents` agents, an
-    `env_cfg.view_size` x `env_cfg.view_size` egocentric view rendered at
-    `env_cfg.tile_size` px/cell (so `view_size * tile_size == 224`).
-
-    `max_steps`/`joint_reward` are passed straight through from
-    `env_cfg` rather than hardcoded, so they can't silently drift out of
-    sync with `cfg.episode_len` the way they did before (the env's own
-    truncation limit and `_reward()`'s time-decay both key off
-    `max_steps`; see `EnvConfig.max_steps`'s docstring comment).
-    """
-    import gymnasium as gym
-    import multigrid.envs
-    from multigrid.wrappers.external import PettingZooWrapper
-
-    def _make():
-        env = gym.make(
-            'MultiGrid-FindGoal-15x15-v0',
-            agents=env_cfg.num_agents,
-            render_mode='rgb_array',
-            num_obstacles=env_cfg.num_obstacles,
-            width=env_cfg.width,
-            height=env_cfg.height,
-            max_steps=env_cfg.max_steps,
-            joint_reward=env_cfg.joint_reward,
-        )
-        return PettingZooWrapper(env)
-    return _make
-
-
-def _validate_episode_budget(cfg: TrainConfig) -> None:
-    """
-    cfg.episode_len (the outer training/eval loop's step budget) and
-    cfg.env.max_steps (the env's own internal truncation limit, passed to
-    gym.make in make_env_fn) must match. If the outer loop's budget is
-    smaller, episodes get cut off before the env itself ever gets a
-    chance to truncate or for agents to reach a goal that's genuinely far
-    away -- this is exactly what silently happened before (episode_len=40
-    vs. the env's default max_steps=250), and reward/success metrics from
-    a mismatched run aren't a fair read on the policy.
-    """
-    if cfg.episode_len != cfg.env.max_steps:
-        raise ValueError(
-            f"cfg.episode_len ({cfg.episode_len}) != cfg.env.max_steps "
-            f"({cfg.env.max_steps}) -- the outer loop's step budget must "
-            f"match the env's own internal max_steps, or episodes get cut "
-            f"off before the env (and _reward()'s time-decay, which is "
-            f"computed against env.max_steps) ever sees the full horizon "
-            f"it was configured for. Set them equal, e.g. via "
-            f"`python train.py episode_len=150 env.max_steps=150`."
-        )
-
-
-# --------------------------------------------------------------------------
-# Checkpointing.
-# --------------------------------------------------------------------------
-def save_checkpoint(path: Path, model: CommNetAgent, optimizer: optim.Optimizer,
-                     cfg: TrainConfig, update: int, mean_return: float) -> None:
-    """
-    Saves everything needed to resume training or run evaluation:
-    model + optimizer state, the resolved config (so eval doesn't need to
-    guess hyperparameters like hidden_dim/num_comm_steps), and bookkeeping
-    (update step, the mean return at save time).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "update": update,
-        "mean_return": mean_return,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "cfg": OmegaConf.to_container(cfg, resolve=True),
-    }, path)
-
-
-def load_checkpoint(path: Path, device: torch.device):
-    """
-    Loads a checkpoint saved by `save_checkpoint`. Rebuild the model with
-    the saved cfg before calling this, e.g. (for an eval script):
-
-        ckpt = load_checkpoint(path, device)
-        cfg = OmegaConf.create(ckpt["cfg"])
-        model = CommNetAgent(cfg.hidden_dim, cfg.env.num_actions,
-                              cfg.num_comm_steps, cfg.tie_weights,
-                              cfg.freeze_encoder).to(device)
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-    """
-    return torch.load(path, map_location=device)
 
 
 # --------------------------------------------------------------------------
@@ -431,7 +223,7 @@ def evaluate(model: CommNetAgent, cfg: TrainConfig, num_episodes: int,
     num_episodes, and the raw per-episode arrays (successes, returns,
     lengths) for further analysis (e.g. a histogram in a notebook).
     """
-    _validate_episode_budget(cfg)
+    validate_episode_budget(cfg)
     device = device or torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if cfg.device == "auto" else cfg.device
     )
@@ -548,7 +340,7 @@ def train(cfg: TrainConfig):
     auto-reset on done, so explicit reset-per-update is the correct (and
     only) way to get clean episode boundaries here.
     """
-    _validate_episode_budget(cfg)
+    validate_episode_budget(cfg)
     device = torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if cfg.device == "auto" else cfg.device
     )
@@ -569,7 +361,7 @@ def train(cfg: TrainConfig):
     adapter = MultiGridPoolAdapter(pool, obs_key=cfg.env.obs_key, noop_action=cfg.env.noop_action)
 
     model = CommNetAgent(cfg.hidden_dim, cfg.env.num_actions, cfg.num_comm_steps,
-                          cfg.tie_weights, cfg.freeze_encoder).to(device)
+                          cfg.tie_weights, cfg.gradient_checkpoint_encoder).to(device)
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
 
     buf = RolloutBuffer(cfg.episode_len, cfg.num_envs, cfg.env.num_agents,
