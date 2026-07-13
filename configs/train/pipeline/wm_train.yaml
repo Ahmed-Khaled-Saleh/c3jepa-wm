@@ -1,4 +1,4 @@
-# configs/pipeline/wm_train.yaml
+# configs/train/pipeline/wm_train.yaml
 defaults:
   - /datamodule: jepa_data
   - /model@model.vqvae: vqvae
@@ -24,8 +24,8 @@ embed_dim: 192
 history_size: 3
 
 
-logging_params:
-  project_name: "phase 0-wm-pretraining"
+# logging_params:
+#   project_name: "phase 0-wm-pretraining"
   
 
 trainer:
