@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'VQVAETrainer']
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #e11fd8c3
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #aa5066e2
 import torch
 import os
 from fastcore.utils import patch
@@ -15,8 +15,9 @@ import wandb
 from ..utils.checkpointer import RetrospectiveCheckpointer
 import hydra
 from pathlib import Path
+from loguru import logger
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #9d8eb7f8
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #1c2701ae
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -53,7 +54,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #5d716f82
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #88f102cf
 class VQVAETrainer(BaseTrainer):
 
     def __init__(self, data_module, model, device, **kwargs):
@@ -81,91 +82,130 @@ class VQVAETrainer(BaseTrainer):
         # Create output directories for visual inspection
         os.makedirs(os.path.join(self.save_dir, "Reconstructions"), exist_ok=True)
     
-    def train_epoch(self, epoch):
-        self.model.train()
-        # self.model.vq_layer.training= True
-        total_loss = 0.0
 
-        for batch_idx, batch in enumerate(self.train_loader):
-            # Manually move data to target device (Lightning did this automatically)
-            real_img = batch.to(self.device)
+    
 
-            self.optimizer.zero_grad()
 
-            # Forward pass
-            recons, input_img, vq_loss, perplexity = self.model(real_img)
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #3dfce3f3
+@patch
+def fit(self: VQVAETrainer, cfg, early_stop_patience=15):
+    best_val_loss = float("inf")
+    epochs_since_improvement = 0
 
-            # Call your model's built-in VQ-VAE loss evaluation function
-            loss_dict = self.model.loss_function(
-                recons,
-                input_img,
-                vq_loss,
-                perplexity,
-            )
+    for epoch in range(1, cfg.pipeline.max_epochs + 1):
+        train_loss = self.train_epoch(epoch)
+        val_loss = self.validate_epoch(epoch)
 
-            loss = loss_dict["loss"]
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-            self.optimizer.step()
+        self.scheduler.step(val_loss)      # was never being called
+        self.checkpoint(epoch, val_loss)   # was never being called
 
-            total_loss += loss.item()
+        if val_loss < best_val_loss - 1e-4:
+            best_val_loss = val_loss
+            epochs_since_improvement = 0
+        else:
+            epochs_since_improvement += 1
 
-            # Log step-level metrics directly to WandB
-            wandb.log({f"train_{k}": v.item() for k, v in loss_dict.items()})
+        if epochs_since_improvement >= early_stop_patience:
+            logger.info(f"Early stopping at epoch {epoch}: no val improvement for {early_stop_patience} epochs.")
+            break
+        
 
-        avg_loss = total_loss / len(self.train_loader)
-        print(f"Epoch {epoch:02d} | Train Loss: {avg_loss:.4f}")
-        return avg_loss
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #aadbc4ae
+@patch
+def train_epoch(self: VQVAETrainer, epoch: int):
+    self.model.train()
+    # self.model.vq_layer.training= True
+    total_loss = 0.0
 
-    @torch.no_grad()
-    def validate_epoch(self, epoch):
-        # self.model.vq_layer.training= False
-        self.model.eval()
-        total_loss = 0.0
+    for batch_idx, batch in enumerate(self.train_loader):
+        # Manually move data to target device (Lightning did this automatically)
+        real_img = batch.to(self.device)
 
-        for batch_idx, batch in enumerate(self.val_loader):
-            real_img = batch.to(self.device)
+        self.optimizer.zero_grad()
 
-            recons, input_img, vq_loss, perplexity = self.model(real_img)
-            loss_dict = self.model.loss_function(
-                recons, input_img, vq_loss, perplexity, M_N=1.0, batch_idx=batch_idx
-            )
+        # Forward pass
+        recons, input_img, vq_loss, perplexity = self.model(real_img)
 
-            total_loss += loss_dict["loss"].item()
-
-        avg_loss = total_loss / len(self.val_loader)
-        print(f"Epoch {epoch:02d} | Val Loss:   {avg_loss:.4f}")
-
-        # Log epoch-level validation loss
-        wandb.log({"val_loss": avg_loss, "perplexity": perplexity.item(), "epoch": epoch,})
-
-        self.sample_and_save_images(self.val_loader, epoch)
-        return avg_loss
-
-    @torch.no_grad()
-    def sample_and_save_images(self, test_loader, epoch):
-        """Replicates on_validation_end by reconstructing a fixed test batch."""
-        self.model.eval()
-
-        # Grab the first batch of images from your test/val loader
-        test_input = next(iter(test_loader)).to(self.device)
-
-        # Reconstruct images using VQ-VAE decoder
-        recons = self.model.generate(test_input)
-
-        # Save grid image to disk
-        recons_path = os.path.join(
-            self.save_dir, "Reconstructions", f"recons_Epoch_{epoch}.png"
+        # Call your model's built-in VQ-VAE loss evaluation function
+        loss_dict = self.model.loss_function(
+            recons,
+            input_img,
+            vq_loss,
+            perplexity,
         )
-        vutils.save_image(recons.data, recons_path, normalize=True, nrow=8)
+        logger.info(f"Batch {batch_idx}/{len(self.train_loader)} | Loss: {loss_dict['loss'].item():.4f}")
 
-        # Upload the reconstructed image grid directly into WandB panel
-        wandb.log(
-            {"Visual Reconstructions": wandb.Image(recons_path, caption=f"Epoch {epoch}")}
+        loss = loss_dict["loss"]
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        self.optimizer.step()
+
+        total_loss += loss.item()
+
+        # Log step-level metrics directly to WandB
+        wandb.log({f"train_{k}": v.item() for k, v in loss_dict.items()})
+
+    avg_loss = total_loss / len(self.train_loader)
+    logger.info(f"Epoch {epoch:02d} | Train Loss: {avg_loss:.4f}")
+    return avg_loss
+
+
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #339b3f6e
+@patch
+@torch.no_grad()
+def sample_and_save_images(self: VQVAETrainer, test_loader, epoch):
+    """Replicates on_validation_end by reconstructing a fixed test batch."""
+    self.model.eval()
+
+    # Grab the first batch of images from your test/val loader
+    test_input = next(iter(test_loader)).to(self.device)
+
+    # Reconstruct images using VQ-VAE decoder
+    recons = self.model.generate(test_input)
+
+    # Save grid image to disk
+    recons_path = os.path.join(
+        self.save_dir, "Reconstructions", f"recons_Epoch_{epoch}.png"
+    )
+    vutils.save_image(recons.data, recons_path, normalize=True, nrow=8)
+
+    # Upload the reconstructed image grid directly into WandB panel
+    wandb.log(
+        {"Visual Reconstructions": wandb.Image(recons_path, caption=f"Epoch {epoch}")}
+    )
+    
+
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #b7a3a3f2
+@patch
+@torch.no_grad()
+def validate_epoch(self: VQVAETrainer, epoch: int):
+    self.model.eval()
+    total_loss = 0.0
+    total_perplexity = 0.0
+
+    for batch_idx, batch in enumerate(self.val_loader):
+        real_img = batch.to(self.device)
+
+        recons, input_img, vq_loss, perplexity = self.model(real_img)
+        loss_dict = self.model.loss_function(
+            recons, input_img, vq_loss, perplexity, M_N=1.0, batch_idx=batch_idx
         )
 
+        total_loss += loss_dict["loss"].item()
+        total_perplexity += loss_dict["Perplexity"].item()
 
-# %% ../../nbs/05a_trainers.msg_trainer.ipynb #3b7187ee
+    avg_loss = total_loss / len(self.val_loader)
+    avg_perplexity = total_perplexity / len(self.val_loader)
+    logger.info(f"Epoch {epoch:02d} | Val Loss:   {avg_loss:.4f}, Perplexity: {avg_perplexity:.4f}")
+
+    # Log epoch-level validation loss
+    wandb.log({"val_loss": avg_loss, "perplexity": avg_perplexity, "epoch": epoch})
+
+    self.sample_and_save_images(self.val_loader, epoch)
+    return avg_loss
+
+
+# %% ../../nbs/05a_trainers.msg_trainer.ipynb #a53ed90c
 @patch
 def checkpoint(self: VQVAETrainer, epoch, val_loss):
     checkpoint_state = {
@@ -176,4 +216,3 @@ def checkpoint(self: VQVAETrainer, epoch, val_loss):
         }
     self.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= -val_loss, step= epoch)
 
-    
