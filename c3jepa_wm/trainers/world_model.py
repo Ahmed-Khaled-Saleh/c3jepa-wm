@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #8dc40f8a
+# %% ../../nbs/05c_trainers.world_model.ipynb #ff932214
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from ..utils.checkpointer import RetrospectiveCheckpointer
 
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #3d011a0d
+# %% ../../nbs/05c_trainers.world_model.ipynb #43d52486
 class TrainerScheduler:
     def __init__(self, wm_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -35,7 +35,7 @@ class TrainerScheduler:
         
     
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #f42eee9c
+# %% ../../nbs/05c_trainers.world_model.ipynb #894fa5df
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -76,10 +76,10 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #45640a4c
+# %% ../../nbs/05c_trainers.world_model.ipynb #0ae10aff
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr,
-                 history_size, num_preds, lambda_sigreg, **kwargs):
+                 history_size, num_preds, lambda_sigreg, early_stop_patience=15, **kwargs):
         super().__init__(
             data_module=data_module, device=device, wm_lr=wm_lr,
             slurm_jobid=slurm_jobid, **kwargs
@@ -87,6 +87,10 @@ class WMTrainer(BaseTrainer):
         self.history_size = history_size
         self.num_preds = num_preds
         self.lambda_sigreg = lambda_sigreg
+        self.early_stop_patience = early_stop_patience
+        self.best_val_loss = float("inf")
+        self.epochs_since_improvement = 0
+
         self.model = model["jepa"].to(device)
         self.wm_optimizer = self.init_optimizer(self.model, lr=self.wm_lr, weight_decay=1e-3)
         self.scheduler = TrainerScheduler(self.wm_optimizer)
@@ -99,9 +103,10 @@ class WMTrainer(BaseTrainer):
             slurm_jobid=self.slurm_jobid, agent_id="WM_trainer", rank=0, n_best=3
         )
         
+        
 
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #8707252a
+# %% ../../nbs/05c_trainers.world_model.ipynb #06e9e38a
 @patch
 def fit(self: WMTrainer, cfg: DictConfig):
     for epoch in range(1, cfg.pipeline.max_epochs + 1):
@@ -109,9 +114,20 @@ def fit(self: WMTrainer, cfg: DictConfig):
         metrics = self.evaluate_epoch(epoch)
         self.scheduler.step(metrics)
         self.checkpoint(epoch, metrics)
-   
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #838d8ea3
+        val_loss = metrics["val_jepa_loss"]
+        if val_loss < self.best_val_loss - 1e-4:   # small min-delta to avoid noise-triggered resets
+            self.best_val_loss = val_loss
+            self.epochs_since_improvement = 0
+        else:
+            self.epochs_since_improvement += 1
+
+        if self.epochs_since_improvement >= self.early_stop_patience:
+            logger.info(f"Early stopping at epoch {epoch}: no improvement for {self.early_stop_patience} epochs.")
+            break
+        
+
+# %% ../../nbs/05c_trainers.world_model.ipynb #201cf363
 @patch
 def train_epoch(self: WMTrainer, epoch):
     self.model.train()
@@ -128,7 +144,7 @@ def train_epoch(self: WMTrainer, epoch):
 
 
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #6b6f3f73
+# %% ../../nbs/05c_trainers.world_model.ipynb #ece8f8a4
 @patch
 def train_batch(self: WMTrainer, epoch, batch):
     B = batch["pixels"].shape[0]
@@ -156,7 +172,7 @@ def train_batch(self: WMTrainer, epoch, batch):
     return output['jepa_loss'].item()
 
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #c8ac9766
+# %% ../../nbs/05c_trainers.world_model.ipynb #37a73a09
 @patch
 @torch.no_grad()
 def evaluate_epoch(self: WMTrainer, epoch):
@@ -174,7 +190,7 @@ def evaluate_epoch(self: WMTrainer, epoch):
     return avg_metrics
 
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #64c2d9b8
+# %% ../../nbs/05c_trainers.world_model.ipynb #5305cb95
 @patch
 @torch.no_grad()
 def evaluate_batch(self: WMTrainer, batch):
@@ -193,7 +209,7 @@ def evaluate_batch(self: WMTrainer, batch):
     return {"val_jepa_loss": output['jepa_loss'].item()}
 
 
-# %% ../../nbs/05c_trainers.world_model.ipynb #59ef9cc2
+# %% ../../nbs/05c_trainers.world_model.ipynb #d17bc3e7
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {

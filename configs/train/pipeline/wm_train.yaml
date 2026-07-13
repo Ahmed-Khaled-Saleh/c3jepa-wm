@@ -1,10 +1,10 @@
 # configs/train/pipeline/wm_train.yaml
 defaults:
   - /datamodule: jepa_data
-  - /model@model.vqvae: vqvae
-  - /model@model.power_net: power_net
+  # - /model@model.vqvae: vqvae
+  # - /model@model.power_net: power_net
   - /model@model.jepa: control_jepa
-  - /model@model.critic: critic
+  # - /model@model.critic: critic
   - _self_
 
 stage: 0
@@ -19,8 +19,8 @@ train_split: 0.9
 seed: 3072
 img_size: 224
 embed_dim: 192
-# msg_embedding_dim: 256
-# num_embeddings: 256
+msg_embedding_dim: 256
+num_embeddings: 256
 history_size: 3
 
 
@@ -36,6 +36,7 @@ trainer:
   history_size: ${pipeline.history_size} # Automatically grabs 3
   num_preds: 1
   lambda_sigreg: 0.1
+  early_stop_patience: 10
   # lambda_pow: 5.0
   # lambda_value: 1.0
   # lambda_quality: 0.1
