@@ -4,9 +4,9 @@ defaults:
   - /model@model.jepa: control_jepa
   - _self_
 
-stage: 2
+stage: 0
 
-# Define Stage 2 specific hyperparameters here
+# Define Stage 0 specific hyperparameters here
 wm_lr: 1e-4
 max_epochs: 100
 num_workers: 6
