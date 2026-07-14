@@ -5,18 +5,18 @@
 # %% auto #0
 __all__ = ['Tensor', 'BaseVAE', 'VectorQuantizer', 'ResidualLayer', 'VQVAE']
 
-# %% ../../nbs/02a_models.msg_net.ipynb #d4cb8b89
+# %% ../../nbs/02a_models.msg_net.ipynb #10ea8b89
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #8e0f62cf
+# %% ../../nbs/02a_models.msg_net.ipynb #6e80d3b6
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 
 Tensor = TypeVar('torch.tensor')
 
-# %% ../../nbs/02a_models.msg_net.ipynb #c4402fbf
+# %% ../../nbs/02a_models.msg_net.ipynb #ba0fb16b
 from torch import nn
 from abc import abstractmethod
 
@@ -45,7 +45,7 @@ class BaseVAE(nn.Module):
     def loss_function(self, *inputs: Any, **kwargs) -> Tensor:
         pass
 
-# %% ../../nbs/02a_models.msg_net.ipynb #64a87a86
+# %% ../../nbs/02a_models.msg_net.ipynb #b7dec808
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, beta=0.25, decay=0.99, eps=1e-5):
         super().__init__()
@@ -100,7 +100,7 @@ class VectorQuantizer(nn.Module):
         return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss, perplexity
     
 
-# %% ../../nbs/02a_models.msg_net.ipynb #e6c12709
+# %% ../../nbs/02a_models.msg_net.ipynb #7320bde9
 class ResidualLayer(nn.Module):
 
     def __init__(self,
@@ -118,7 +118,7 @@ class ResidualLayer(nn.Module):
 
 
 
-# %% ../../nbs/02a_models.msg_net.ipynb #42a2e48a
+# %% ../../nbs/02a_models.msg_net.ipynb #3364f9db
 class VQVAE(BaseVAE):
 
     def __init__(self,

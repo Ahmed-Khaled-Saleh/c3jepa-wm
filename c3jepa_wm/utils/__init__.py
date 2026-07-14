@@ -6,11 +6,11 @@
 __all__ = ['init_data', 'get_ckp_path', 'init_model', 'init_trainer', 'init_evaluator', 'channel', 'channel_optimal',
            'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #23efd0da
+# %% ../../nbs/06a_utils.__init__.ipynb #b645bd1e
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #e4c5ee12
+# %% ../../nbs/06a_utils.__init__.ipynb #a1314fa4
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -18,14 +18,14 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #c81863f3
+# %% ../../nbs/06a_utils.__init__.ipynb #1c85d973
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #81f9a923
+# %% ../../nbs/06a_utils.__init__.ipynb #e92d1865
 def get_ckp_path(model_name):
     ckp_path = {
     "jepa":
@@ -51,7 +51,7 @@ def get_ckp_path(model_name):
     raise FileNotFoundError(f"No checkpoint path found for {model_name} on any known hostname.")
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #dc0a4d60
+# %% ../../nbs/06a_utils.__init__.ipynb #22fb6c2c
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -141,7 +141,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #3061b135
+# %% ../../nbs/06a_utils.__init__.ipynb #cf84fad5
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -155,7 +155,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #f9fbfc2e
+# %% ../../nbs/06a_utils.__init__.ipynb #fb3b9af8
 def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the evaluator and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -171,7 +171,7 @@ def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #48547134
+# %% ../../nbs/06a_utils.__init__.ipynb #169b9a80
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -254,7 +254,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #bc471121
+# %% ../../nbs/06a_utils.__init__.ipynb #8b6f4f85
 @torch.no_grad()
 def channel_optimal(msg_indices, csi, device, codebook_size=256, snr_db=10.0,
                      max_power=10.0, noise_power=1.0, perfect_comm=True):
@@ -328,7 +328,7 @@ def channel_optimal(msg_indices, csi, device, codebook_size=256, snr_db=10.0,
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #7b4e74b6
+# %% ../../nbs/06a_utils.__init__.ipynb #898ed4ab
 class PhaseTransitionChecker:
     def __init__(
         self,

@@ -5,15 +5,15 @@
 # %% auto #0
 __all__ = ['Scheduler', 'WSDSchedule', 'WarmupCosineSchedule', 'CosineWDSchedule', 'LinearDecaySchedule']
 
-# %% ../../nbs/04b_optimizers.scheduler.ipynb #fa2cda6a
+# %% ../../nbs/04b_optimizers.scheduler.ipynb #7841e4bd
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/04b_optimizers.scheduler.ipynb #36652eac
+# %% ../../nbs/04b_optimizers.scheduler.ipynb #beec9c26
 from functools import partial
 from torch.optim import Optimizer
 
-# %% ../../nbs/04b_optimizers.scheduler.ipynb #3ba94e7d
+# %% ../../nbs/04b_optimizers.scheduler.ipynb #4f23f2d3
 import torch
 import math
 class Scheduler:
@@ -84,7 +84,7 @@ class Scheduler:
         # Return the base LR (not group-specific)
         return self.base_lr
 
-# %% ../../nbs/04b_optimizers.scheduler.ipynb #80c1a3ab
+# %% ../../nbs/04b_optimizers.scheduler.ipynb #5aa1537f
 import math
 
 
