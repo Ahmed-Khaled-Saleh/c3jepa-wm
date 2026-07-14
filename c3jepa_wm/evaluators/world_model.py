@@ -5,10 +5,12 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #5043d7b7
+# %% ../../nbs/07c_evaluators.world_model.ipynb #5b7fa7c6
 from collections import defaultdict
 from typing import Any, Callable
 
+from loguru import logger
+import math
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -17,11 +19,11 @@ import hydra
 import wandb
 from fastcore.utils import patch
 
-from ..utils import channel
+from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #d5f5cb4b
+# %% ../../nbs/07c_evaluators.world_model.ipynb #d8928b8b
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -93,10 +95,10 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #31429d79
+# %% ../../nbs/07c_evaluators.world_model.ipynb #15837629
 @patch
 @torch.no_grad()
-def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, schedule=None, power=None, no_comm=False):
+def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
     """
     partner_pixels_vqvae_t0: (B, C, H, W) -- partner's obs at t0, VQ-VAE-transform space
     csi_t0: (B,) complex -- channel state at t0 for this sender->receiver link
@@ -106,62 +108,57 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     indices = self.vqvae.get_message_indices(partner_pixels_vqvae_t0)  # (B, 1, H, W)
     indices = rearrange(indices, "B H W -> B (H W)").long()  # (B, 49)
 
-    if schedule is not None and power is not None:
-        csi = csi_t0.to(self.device)
-        schedule = torch.as_tensor(schedule, device=self.device)
-        power = torch.as_tensor(power, device=self.device)
+    # if schedule is not None and power is not None:
+    csi = csi_t0.to(self.device)
+    # schedule = torch.as_tensor(schedule, device=self.device)
+    # power = torch.as_tensor(power, device=self.device)
 
-        indices = channel(
-            schedule=schedule,
-            power=power,
-            msg_indices=indices,
-            csi=csi,
-            device=self.device,
-            snr_db=self.SNR,
-            no_comm=no_comm,
-        )
+    power_schedule = compute_power_schedule(csi, self.SNR, self.noise_power, self.p_max)
+    indices = apply_channel(
+        msg_indices=indices,
+        csi=csi,
+        schedule=power_schedule[1],
+        power=power_schedule[0],
+        device=self.device,
+        no_comm=no_comm,
+    )
+
+    # indices = channel(
+    #     schedule=schedule,
+    #     power=power,
+    #     msg_indices=indices,
+    #     csi=csi,
+    #     device=self.device,
+    #     snr_db=self.SNR,
+    #     no_comm=no_comm,
+    # )
 
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #b0aa8d97
-@patch
-def _extract_power_and_schedule(self: MultiAgentGoalEvaluator, csi):
-    snr_linear = 10 ** (self.SNR / 10.0)
-    optimal_power = snr_linear * self.noise_power / (torch.abs(csi) ** 2 + 1e-8)
-    schedule = (optimal_power <= self.p_max).float()
-    return optimal_power, schedule
-
-
-# %% ../../nbs/07c_evaluators.world_model.ipynb #466f3c7e
+# %% ../../nbs/07c_evaluators.world_model.ipynb #cd0ff155
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
-    """Build a batched info dict for `agent` across a chunk of episodes.
-
-    episodes[agent][key]: already-windowed tensors with leading batch
-    dim N (sliced to fixed size per episode at buffer-build time, then
-    concatenated across the chunk) -- no per-episode t0 indexing needed
-    here anymore.
-    """
     pixels = episodes[agent]["pixels_hist"]
     actions = episodes[agent]["action_hist"]
     goal_pixels = episodes[agent]["goal_pixels"]
 
     partner_obs_vqvae_t0 = episodes[partner]["pov_vqvae_t0"]
     csi_t0 = episodes[partner]["csi_t0"].to(self.device)
-    power_level, schedule = self._extract_power_and_schedule(csi_t0)
-    msg_indices = self._encode_message(partner_obs_vqvae_t0, csi_t0, schedule=schedule, power=power_level)
+    # power_level, schedule = self._extract_power_and_schedule(csi_t0)
+    msg_indices = self._encode_message(partner_obs_vqvae_t0, csi_t0)
 
     return {
         "pixels": pixels.to(self.device),
         "action": actions.to(self.device),
         "goal": goal_pixels.to(self.device),
         "msg_indices": msg_indices.to(self.device),
+        "csi": csi_t0,                          
     }
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #1782db9f
+# %% ../../nbs/07c_evaluators.world_model.ipynb #0bde3169
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool: MultiAgentEnvPool, t0s, max_steps=150):
@@ -197,6 +194,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
     # --- reset all N envs, then force each to its recorded state at its t0 ---
     pool.reset(seed=0)
     goal_pos_list = episodes["goal_pos"].tolist()
+    logger.info(f"Setting {N} envs to their recorded states at t0...")
     for i in range(N):
         agent_positions = {
             a: episodes[a]["pos_t0"][i].tolist() for a in self.agents
@@ -219,6 +217,8 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
     alive = {agent: np.ones(N, dtype=bool) for agent in self.agents}
 
     for real_step in range(max_steps):
+        logger.info(f"Real step {real_step}/{max_steps} -- alive agents: "
+                    f"{[alive[a].sum() for a in self.agents]}")
         # env-level mask: skip envs where BOTH agents are done, for efficiency
         env_mask = alive[self.agents[0]] | alive[self.agents[1]]
         if not env_mask.any():
@@ -229,6 +229,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
             # full-batch replan every step (planner itself is unchanged --
             # no per-episode slicing here, matching the current design);
             # done agents' actions get overwritten with noop below.
+            logger.info(f"Planning for agent {agent} at step {real_step}...")
             _, plan = self.planners[agent].plan(info[agent])  # (N, horizon)
             act = plan[:, 0].cpu().numpy()
             act = np.where(alive[agent], act, self.noop_action)
@@ -262,19 +263,24 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
                 info[agent]["action"][i] = torch.cat(
                     [info[agent]["action"][i, 1:].unsqueeze(1), new_action], dim=0
                 ).squeeze()
+                
+                logger.info(f"Agent {agent} in env {i} at step {real_step}: "
+                            f"dist_to_goal={dist.item():.4f}, reached={reached}, "
+                            f"action={actions[agent][i]}")
 
                 if reached:
                     alive[agent][i] = False
 
-        # msg_indices only used on the very first planning call
+        # msg_indices and csi only used on the very first planning call
         for agent in self.agents:
             info[agent].pop("msg_indices", None)
+            info[agent].pop("csi", None)
 
     return results
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #7ba17f8a
+# %% ../../nbs/07c_evaluators.world_model.ipynb #145b8386
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],

@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from fastcore.utils import patch
+from loguru import logger
 
 # %% ../../nbs/08a_planners.mpc.ipynb #153f15c4
 class JEPAGoalPlanner:
@@ -208,6 +209,9 @@ def _plan_chunk(self: DiscreteCEMPlanner, chunk_info, verbose=False, chunk_label
     ).to(self.device)
 
     for step in range(self.opt_steps):
+        logger.info(f"[DiscreteCEMPlanner]{chunk_label} step {step + 1}/{self.opt_steps} -- "
+                    f"mean probs: {probs.mean(dim=(0,1)).cpu().numpy()}")
+        
         samples = self._sample_actions(probs)  # (cur_bs, S, horizon), long
         action_candidates = torch.cat([hist_action, samples], dim=2).long()
 
@@ -220,7 +224,7 @@ def _plan_chunk(self: DiscreteCEMPlanner, chunk_info, verbose=False, chunk_label
         )
 
         if verbose:
-            print(
+            logger.info(
                 f"[DiscreteCEMPlanner]{chunk_label} step {step + 1}/{self.opt_steps} "
                 f"mean elite cost: {cost.mean().item():.4f}"
             )
@@ -253,6 +257,7 @@ def plan(self: DiscreteCEMPlanner, info_dict, verbose=False):
     probs_full = torch.empty(B, self.horizon, self.action_dim, device=self.device)
 
     for start_idx in range(0, B, chunk_size):
+        logger.info(f"Planning for chunk {start_idx}:{min(start_idx + chunk_size, B)}...")
         end_idx = min(start_idx + chunk_size, B)
         chunk_info = {
             k: (v[start_idx:end_idx] if torch.is_tensor(v) else v)
@@ -264,6 +269,9 @@ def plan(self: DiscreteCEMPlanner, info_dict, verbose=False):
 
     plan = torch.argmax(probs_full, dim=-1)  # (B, horizon)
     first_action = plan[:, 0]
+    logger.info(f"Planning completed. Returning first actions and full plans.")
+    logger.info(f"First actions: {first_action.cpu().numpy()}")
+    logger.info(f"Full plans: {plan.cpu().numpy()}")
     return first_action, plan
 
 
