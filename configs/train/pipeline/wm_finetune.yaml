@@ -4,7 +4,7 @@ defaults:
   - /model@model.jepa: control_jepa
   - _self_
 
-stage: 2
+stage: 0
 
 # Define Stage 2 specific hyperparameters here
 wm_lr: 1e-4
@@ -17,6 +17,13 @@ embed_dim: 192
 msg_embedding_dim: 256
 num_embeddings: 256
 history_size: 3
+
+
+model:
+  vqvae:
+    checkpoint_path: ??? 
+  jepa:
+    checkpoint_path: ??? 
 
 
 trainer:
