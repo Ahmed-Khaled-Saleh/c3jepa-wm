@@ -30,7 +30,7 @@ model:
 evaluator:
   _target_: c3jepa_wm.evaluators.world_model.MultiAgentGoalEvaluator
   history_size: ${pipeline.history_size} # Automatically grabs 3
-  goal_offset: 10
+  goal_offset: 15
   SNR: 10.0
   p_max: 10
   noise_power: 0.001
