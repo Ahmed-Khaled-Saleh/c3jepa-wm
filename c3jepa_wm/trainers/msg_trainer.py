@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['BaseTrainer', 'VQVAETrainer']
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #bf469f4c
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #2ce7128c
 import torch
 import os
 from fastcore.utils import patch
@@ -17,7 +17,7 @@ import hydra
 from pathlib import Path
 from loguru import logger
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #bcf4e740
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #a464d1ad
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -54,7 +54,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #79453582
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #4d5ac061
 class VQVAETrainer(BaseTrainer):
 
     def __init__(self, data_module, model, device, **kwargs):
@@ -86,7 +86,7 @@ class VQVAETrainer(BaseTrainer):
     
 
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #55302f35
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #30440900
 @patch
 def fit(self: VQVAETrainer, cfg, early_stop_patience=15):
     best_val_loss = float("inf")
@@ -110,7 +110,7 @@ def fit(self: VQVAETrainer, cfg, early_stop_patience=15):
             break
         
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #0a820bbf
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #f60c2544
 @patch
 def train_epoch(self: VQVAETrainer, epoch: int):
     self.model.train()
@@ -150,7 +150,7 @@ def train_epoch(self: VQVAETrainer, epoch: int):
     return avg_loss
 
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #46705975
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #78892ded
 @patch
 @torch.no_grad()
 def sample_and_save_images(self: VQVAETrainer, test_loader, epoch):
@@ -175,7 +175,7 @@ def sample_and_save_images(self: VQVAETrainer, test_loader, epoch):
     )
     
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #edc8eaac
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #631dc4d6
 @patch
 @torch.no_grad()
 def validate_epoch(self: VQVAETrainer, epoch: int):
@@ -205,7 +205,7 @@ def validate_epoch(self: VQVAETrainer, epoch: int):
     return avg_loss
 
 
-# %% ../../nbs/05b_trainers.msg_trainer.ipynb #7ab36d71
+# %% ../../nbs/05b_trainers.msg_trainer.ipynb #c61cdb7b
 @patch
 def checkpoint(self: VQVAETrainer, epoch, val_loss):
     checkpoint_state = {
