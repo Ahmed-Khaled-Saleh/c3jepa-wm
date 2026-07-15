@@ -15,7 +15,7 @@
 module --force purge
 module load pytorch
 source /scratch/project_2009050/rl/bin/activate
-cd /projappl/project_2009050/c3jepa-wm/mains/baselines/iql
+cd /projappl/project_2009050/c3jepa-wm/mains/baselines/og-marl
 
 # export WANDB_START_METHOD=thread
 # ts=$(date +%Y%m%d_%H%M%S)
