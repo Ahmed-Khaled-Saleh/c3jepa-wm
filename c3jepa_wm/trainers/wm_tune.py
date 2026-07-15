@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMFinetuner']
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #a6228788
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #6662ea7f
 import math
 import torch
 import os
@@ -24,7 +24,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel, channel_optimal, compute_power_schedule, apply_channel
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #ca553280
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #4a537571
 class TrainerScheduler:
     def __init__(self, wm_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -36,7 +36,7 @@ class TrainerScheduler:
         
     
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #4319663c
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #711cfd7d
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -77,7 +77,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #87e7131c
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #f7a3bce8
 class WMFinetuner(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr,
                  history_size, num_preds, lambda_sigreg, early_stop_patience=15, **kwargs):
@@ -111,7 +111,7 @@ class WMFinetuner(BaseTrainer):
         
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #2ad99185
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #ae2b1f65
 @patch
 def fit(self: WMFinetuner, cfg: DictConfig):
     for epoch in range(1, cfg.pipeline.max_epochs + 1):
@@ -133,7 +133,7 @@ def fit(self: WMFinetuner, cfg: DictConfig):
         
         
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #cb516f0c
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #44c9d3fa
 @patch
 @torch.no_grad()
 def get_msg_indices(self: WMFinetuner, sender_pov_seq):
@@ -146,12 +146,12 @@ def get_msg_indices(self: WMFinetuner, sender_pov_seq):
     B, T, C, H, W = sender_pov_seq.shape
     sender_pov_flat = rearrange(sender_pov_seq.to(self.device), "b t c h w -> (b t) c h w")  # (B*T, C, H, W)
     msg_indices_flat = self.vqvae.get_message_indices(sender_pov_flat)  # (B*T, 7, 7)
-    msg_indices = rearrange(msg_indices_flat, "b h w -> b t (h w)", b=B, t=T)   # (B, T, 49)
+    msg_indices = rearrange(msg_indices_flat, "(b t) h w -> b t (h w)", b=B, t=T)   # (B, T, 49)
     return msg_indices
 
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #767bed57
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #e298f901
 @patch
 def train_epoch(self: WMFinetuner, epoch):
     self.model.train()
@@ -174,7 +174,7 @@ def train_epoch(self: WMFinetuner, epoch):
     return avg_loss_jepa
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #3e0b1805
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #5fd29a11
 @patch
 def train_batch(self: WMFinetuner, epoch, batch, perfect_comm):
     B = batch["sender_pov"].shape[0]
@@ -185,12 +185,17 @@ def train_batch(self: WMFinetuner, epoch, batch, perfect_comm):
     msg_indices = self.get_msg_indices(
             batch["sender_pov"]
         )  # (B, T, 49)   
+    # import ipdb; ipdb.set_trace()
+    msg_indices_flat = rearrange(
+        msg_indices, "b t d -> (b t) d"
+    )
     
     csi = batch["sender_csi"] # (B, T, nighbours = 1, dim= 1)
     csi_flat = rearrange(
         batch["sender_csi"].to(self.device), "b t n d -> (b t) n d"
     )
-    received_msg = channel_optimal(msg_indices, csi_flat, device= self.device, perfect_comm= perfect_comm)
+    received_msg = channel_optimal(msg_indices_flat, csi_flat, device= self.device, perfect_comm= perfect_comm)
+    received_msg = rearrange(received_msg, "(b t) d -> b t d", b=B, t=T)
 
     csi = csi.squeeze(-2).squeeze(-1)  # (B, T, 1, 1) -> (B, T)
 
@@ -217,7 +222,7 @@ def train_batch(self: WMFinetuner, epoch, batch, perfect_comm):
     return output['jepa_loss'].item()
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #151ae01e
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #e38bb683
 @patch
 @torch.no_grad()
 def evaluate_epoch(self: WMFinetuner, epoch):
@@ -234,14 +239,14 @@ def evaluate_epoch(self: WMFinetuner, epoch):
 
         for k, v in metrics.items():
             all_metrics.setdefault(k, []).append(v)
-
+        
     # Average over all batches
     avg_metrics = {k: sum(v) / len(v) for k, v in all_metrics.items()}
     wandb.log({**avg_metrics, "epoch": epoch})
     return avg_metrics
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #4b695944
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #74eb68fd
 @patch
 @torch.no_grad()
 def evaluate_batch(self: WMFinetuner, batch, perfect_comm):
@@ -251,12 +256,16 @@ def evaluate_batch(self: WMFinetuner, batch, perfect_comm):
     msg_indices = self.get_msg_indices(
             batch["sender_pov"]
         )  # (B, T, 49)   
+    msg_indices_flat = rearrange(
+        msg_indices, "b t d -> (b t) d"
+    )
     
     csi = batch["sender_csi"] # (B, T, nighbours = 1, dim= 1)
     csi_flat = rearrange(
         batch["sender_csi"].to(self.device), "b t n d -> (b t) n d"
     )
-    received_msg = channel_optimal(msg_indices, csi_flat, device= self.device, perfect_comm= perfect_comm)
+    received_msg = channel_optimal(msg_indices_flat, csi_flat, device= self.device, perfect_comm= perfect_comm)
+    received_msg = rearrange(received_msg, "(b t) d -> b t d", b=B, t=T)
 
     csi = csi.squeeze(-2).squeeze(-1)  # (B, T, 1, 1) -> (B, T)
 
@@ -279,7 +288,7 @@ def evaluate_batch(self: WMFinetuner, batch, perfect_comm):
     }
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #9bf85b34
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #6c153390
 @patch
 def checkpoint(self: WMFinetuner, epoch, val_loss):
 

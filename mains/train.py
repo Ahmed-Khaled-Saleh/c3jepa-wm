@@ -27,7 +27,7 @@ def main(cfg: DictConfig):
     load_dotenv("../.env")  # Load environment variables from .env file (e.g., API keys)
     # --- 2. Seed and Environment Setup ---
     seed_everything(cfg.exp_params.manual_seed)
-    device = torch.device("cuda")# if torch.cuda.is_available() else "cpu" #: remove for traiing on puhti
+    device = torch.device("cuda") #if torch.cuda.is_available() else "cpu" #: remove for traiing on puhti
     logger.info(f"Using runtime hardware device: {device}")
 
     # --- 3. Initialize Weights & Biases (Using Hydra Config Values) ---
