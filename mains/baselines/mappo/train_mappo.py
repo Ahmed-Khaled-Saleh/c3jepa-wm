@@ -137,6 +137,19 @@ class VitEncoderModule(nn.Module):
                 self._manual_checkpoint = True
 
     def forward(self, obs_uint8: torch.Tensor) -> torch.Tensor:
+        # Defensive device move: SyncDataCollector's device-casting splits
+        # into policy_device/env_device/storing_device, and whether the
+        # observation actually arrives on this module's device by the time
+        # it reaches forward() depends on internal torchrl casting behavior
+        # for a CPU-native gym env that isn't fully pinned down here (can't
+        # verify against a live run in this sandbox). Moving explicitly,
+        # unconditionally, sidesteps needing to get that exactly right --
+        # this is a no-op (near-zero cost) if it's already on the right
+        # device, and fixes a real
+        # "Input type torch.FloatTensor and weight type torch.cuda.FloatTensor"
+        # crash if it wasn't.
+        obs_uint8 = obs_uint8.to(next(self.parameters()).device)
+
         *batch, n_agents, H, W, C = obs_uint8.shape
         x = obs_uint8.reshape(-1, H, W, C).movedim(-1, -3)  # (*batch*n_agents, 3, 224, 224)
         x = self.processor(x)
