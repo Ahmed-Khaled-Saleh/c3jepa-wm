@@ -2,7 +2,7 @@ system_name: "iql+cql (torch)"
 seed: 0
 wandb_project: og-marl
 training_steps: 1e5
-data_path: "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/0_results/dataset.h5"
+data_path: "/scratch/project_2009050/datasets/findgoal/dataset.h5"
 embed_dim: 192
 
 
