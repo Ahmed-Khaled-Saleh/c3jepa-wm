@@ -50,37 +50,372 @@ below before trusting anything else in this file:
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import hydra
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint
 import wandb
 from hydra.core.config_store import ConfigStore
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
+from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn.distributions import NormalParamExtractor  # noqa: F401 (not used, discrete actions)
 
 from torchrl.collectors import SyncDataCollector
 from torchrl.data import TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
-from torchrl.envs import ExplorationType, set_exploration_type
+from torchrl.envs import RewardSum, TransformedEnv, ExplorationType, set_exploration_type
+from torchrl.modules import MultiAgentMLP, ProbabilisticActor
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
+import torchvision.transforms.v2 as v2
+from stable_pretraining.backbone.utils import vit_hf
 
-from utils import (
-    validate_episode_budget,
-    _keys,
-    debug_env_structure,
-    make_torchrl_env_fn,
-    save_checkpoint,
-)
-from modules import VitEncoderModule, build_networks
-from cfg import MAPPOConfig
+# Reuse the env-construction/config plumbing already validated in train.py
+# (EnvConfig, make_env_fn -- gym.make(...) with max_steps/joint_reward
+# wired through, and the episode_len == env.max_steps guard).
+from train import EnvConfig, _validate_episode_budget
+
+
+# --------------------------------------------------------------------------
+# Same image encoder as CommNet's CommNetAgent.encode -- reused verbatim.
+# --------------------------------------------------------------------------
+img_transform = v2.Compose([
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
+
+class VitEncoderModule(nn.Module):
+    """
+    (*batch, n_agents, 224, 224, 3) uint8 -> (*batch, n_agents, hidden_dim)
+    float feature per agent. Same backbone/preprocessing as
+    `CommNetAgent.encode` in train.py, factored out standalone so it can
+    sit inside a `TensorDictModule` for both the MAPPO actor and critic.
+
+    `noise_std`: standard deviation of simple additive white Gaussian
+    noise applied to the normalized image tensor before the backbone.
+    0.0 (default) = no noise. This is used to simulate a noisy
+    communication channel corrupting what the *centralized critic*
+    receives (see `evaluate()`'s channel_noise_std) -- it's a plain
+    instance attribute rather than a constructor-only setting so
+    `evaluate()` can toggle it on/off around specific forward passes
+    without rebuilding the module.
+
+    `gradient_checkpoint`: trades compute for memory by recomputing
+    backbone activations during backward instead of storing them, while
+    still allowing full gradient flow -- important here since both the
+    actor's and critic's encoders train from scratch (`pretrained=False`
+    by default) and so can never be frozen; freezing would mean they never
+    learn anything. With two independent ViT instances (actor + critic,
+    intentionally not weight-shared -- see the note above `build_networks`),
+    this matters at least as much here as in CommNet's single-encoder setup.
+    """
+
+    def __init__(self, hidden_dim: int, pretrained: bool = False, noise_std: float = 0.0,
+                 gradient_checkpoint: bool = False):
+        super().__init__()
+        self.encoder = vit_hf(
+            size="tiny", patch_size=14, image_size=224,
+            pretrained=pretrained, use_mask_token=True,
+        )
+        self.processor = img_transform
+        self.hidden_dim = hidden_dim
+        self.noise_std = noise_std
+
+        self._manual_checkpoint = False
+        if gradient_checkpoint:
+            if hasattr(self.encoder, "gradient_checkpointing_enable"):
+                self.encoder.gradient_checkpointing_enable()
+            else:
+                self._manual_checkpoint = True
+
+    def forward(self, obs_uint8: torch.Tensor) -> torch.Tensor:
+        *batch, n_agents, H, W, C = obs_uint8.shape
+        x = obs_uint8.reshape(-1, H, W, C).movedim(-1, -3)  # (*batch*n_agents, 3, 224, 224)
+        x = self.processor(x)
+        if self.noise_std > 0:
+            x = x + torch.randn_like(x) * self.noise_std  # simple AWGN "channel effect"
+
+        if self._manual_checkpoint and self.training:
+            def _encoder_fwd(inp):
+                return self.encoder(inp)['last_hidden_state']
+            hidden = torch.utils.checkpoint.checkpoint(_encoder_fwd, x, use_reentrant=False)
+        else:
+            hidden = self.encoder(x)['last_hidden_state']
+
+        feats = hidden[:, 0]  # CLS token, (*batch*n_agents, hidden)
+        return feats.reshape(*batch, n_agents, self.hidden_dim)
+
+
+# --------------------------------------------------------------------------
+# Config (Hydra structured config), extending train.py's EnvConfig.
+# --------------------------------------------------------------------------
+@dataclass
+class MAPPOConfig:
+    env: EnvConfig = field(default_factory=EnvConfig)
+
+    num_envs: int = 8   # NOTE: currently UNUSED -- SyncDataCollector below is given a single-env
+                         # factory (env_fn), not wrapped in ParallelEnv/SerialEnv, so collection
+                         # runs from exactly one env sequentially regardless of this value. Not a
+                         # memory risk as-is (it isn't silently multiplying GPU usage), but don't
+                         # expect changing this to do anything until real vectorization is added.
+    hidden_dim: int = 192
+    pretrained_encoder: bool = False
+    gradient_checkpoint_encoder: bool = True  # see VitEncoderModule's docstring -- applies to
+                                               # BOTH the actor's and critic's (separate) encoders
+
+    actor_depth: int = 2
+    actor_num_cells: int = 256
+    critic_depth: int = 2
+    critic_num_cells: int = 256
+
+    # PPO hyperparameters (tutorial defaults, adjust as needed)
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_epsilon: float = 0.2
+    entropy_coeff: float = 0.01
+    critic_coeff: float = 1.0
+    normalize_advantage: bool = True
+    lr: float = 3e-4
+    max_grad_norm: float = 0.5
+
+    # frames_per_batch/minibatch_size are the real memory levers here (unlike CommNet's
+    # single-shot buffer recompute, PPO already minibatches -- the risk is GAE's one-shot
+    # no_grad forward over the whole frames_per_batch batch, and each minibatch_size *
+    # n_agents * 2 (separate actor + critic ViT encoders) images per gradient step).
+    frames_per_batch: int = 1_200
+    total_frames: int = 3_000_000
+    num_epochs: int = 4              # PPO passes over each collected batch (compute, not memory)
+    minibatch_size: int = 150
+
+    episode_len: int = 150           # must equal env.max_steps -- see train.py's _validate_episode_budget
+    device: str = "auto"
+    seed: int | None = None          # also fixes the env's grid/obstacle/spawn layout across the
+                                       # whole run (goal position still varies -- see
+                                       # make_torchrl_env_fn's docstring), not just torch's RNG
+    log_every: int = 1               # in outer collector iterations, not frames
+
+    eval_every: int = 20             # outer iterations; 0 disables periodic eval
+    eval_episodes: int = 20
+    eval_deterministic: bool = True  # ExplorationType.MODE (argmax) vs sampling
+    eval_channel_noise_std: float = 0.0  # AWGN std added to the CENTRALIZED CRITIC's
+                                          # observations only during evaluation, simulating a
+                                          # noisy channel; does not affect action selection
+                                          # (the decentralized actor always sees clean obs).
+                                          # 0.0 = no noise, matches training behavior.
+
+    checkpoint_dir: str = "checkpoints"
+    checkpoint_every: int = 20       # outer iterations
+    project_name: str = "commnet-mappo"
+
 
 cs = ConfigStore.instance()
 cs.store(name="mappo_schema", node=MAPPOConfig)
+
+
+# --------------------------------------------------------------------------
+# TorchRL env construction on top of train.py's gym env.
+# --------------------------------------------------------------------------
+# Assumed defaults -- see debug_env_structure() below. Adjust if your
+# actual multigrid PettingZoo agent naming differs from "agent_0", "agent_1"
+# (see the "IMPORTANT -- key-path assumptions" note at the top of this file).
+GROUP = "agent"
+
+
+def _keys(group: str = GROUP):
+    return {
+        "obs": (group, "observation", "pov"),
+        "action": (group, "action"),
+        "reward": (group, "reward"),
+        "done": (group, "done"),
+        "terminated": (group, "terminated"),
+        "truncated": (group, "truncated"),
+        "hidden": (group, "hidden"),
+        "logits": (group, "logits"),
+        "value": (group, "state_value"),
+        "episode_reward": (group, "episode_reward"),
+    }
+
+
+def make_torchrl_env_fn(env_cfg: EnvConfig, fixed_seed: int | None = None):
+    """
+    Builds the base gym `FindGoalEnv` with the same kwargs as train.py's
+    `make_env_fn` (max_steps/joint_reward/num_obstacles/width/height, all
+    from `env_cfg`), but wraps it with `TorchRLPettingZooWrapper` --
+    NOT `train.py`'s `make_env_fn` itself, which wraps with the plain
+    `PettingZooWrapper` (integer agent IDs, correct for the CommNet /
+    `MultiAgentEnvPool` path but wrong here). TorchRL's own
+    `PettingZooWrapper` requires string agent IDs (it calls
+    `.split("_")` on each entry of `possible_agents` to infer the default
+    group name), which only `TorchRLPettingZooWrapper` provides -- passing
+    the int-keyed wrapper produces
+    `AttributeError: 'int' object has no attribute 'split'`.
+
+    Then adds `RewardSum` so episode-total reward is tracked automatically
+    (mirrors the tutorial's transform).
+
+    fixed_seed: if set, EVERY reset of this env -- including
+    `SyncDataCollector`'s own internal auto-resets whenever an episode
+    ends during training, which this module has no direct call-site
+    access to -- is forced onto this exact seed, giving a fixed grid/
+    obstacle/spawn layout across the whole run (only the goal position
+    still varies episode to episode, via FindGoalEnv's separate
+    `_goal_rng`; see chat). A gymnasium-style `env.reset(seed=X)` only
+    fixes the layout for that ONE reset -- every later bare `env.reset()`
+    (no seed re-passed) just advances the same underlying RNG to a NEW
+    state, not back to X's state, which is what a naive `env.set_seed(X)`
+    call (torchrl's usual seeding entrypoint) would give you: a
+    reproducible SEQUENCE of different layouts, not one repeated fixed
+    layout. `rollout()`'s own `auto_reset=True` path also has no
+    parameter for injecting a seed into its internal reset call at all
+    (checked against the actual torchrl source). Monkey-patching
+    `_reset_parallel` on this specific env instance is the one place
+    that's guaranteed to see every reset the whole pipeline ever
+    triggers, regardless of caller, and override the seed unconditionally.
+    """
+    import gymnasium as gym
+    import multigrid.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+    from multigrid.wrappers.external import TorchRLPettingZooWrapper
+    from torchrl.envs.libs import pettingzoo as torchrl_pettingzoo
+
+    def _make():
+        base_gym_env = gym.make(
+            'MultiGrid-FindGoal-15x15-v0',
+            agents=env_cfg.num_agents,
+            render_mode='rgb_array',
+            num_obstacles=env_cfg.num_obstacles,
+            width=env_cfg.width,
+            height=env_cfg.height,
+            max_steps=env_cfg.max_steps,
+            joint_reward=env_cfg.joint_reward,
+        )
+        pz_env = TorchRLPettingZooWrapper(base_gym_env)  # string agent IDs: "agent_0", "agent_1", ...
+        env = torchrl_pettingzoo.PettingZooWrapper(
+            env=pz_env,
+            return_state=False,
+            group_map=None,
+            use_mask=False,
+        )
+
+        if fixed_seed is not None:
+            _original_reset_parallel = env._reset_parallel
+
+            def _seeded_reset_parallel(**kwargs):
+                kwargs["seed"] = fixed_seed  # override whatever was passed (or nothing)
+                return _original_reset_parallel(**kwargs)
+
+            env._reset_parallel = _seeded_reset_parallel
+
+        env = TransformedEnv(
+            env,
+            RewardSum(in_keys=[env.reward_key], out_keys=[_keys()["episode_reward"]]),
+        )
+        return env
+    return _make
+
+
+def debug_env_structure(cfg: MAPPOConfig) -> None:
+    """
+    Run this FIRST (e.g. `python -c "from train_mappo import *; ..."` or
+    call from a notebook) before trusting GROUP/*_KEY above. Prints
+    `env.group_map` and one reset+step tensordict so you can confirm the
+    actual key paths for your installed multigrid/torchrl versions.
+    """
+    env = make_torchrl_env_fn(cfg.env)()
+    print("group_map:", env.group_map)
+    td = env.reset()
+    print("reset() tensordict:\n", td)
+    td = env.rand_step(td)
+    print("step() tensordict:\n", td)
+    env.close()
+
+
+# --------------------------------------------------------------------------
+# Networks: shared VitEncoderModule design note.
+# --------------------------------------------------------------------------
+# It's tempting to save compute by giving the actor and critic the SAME
+# VitEncoderModule instance (one ViT forward pass feeding both heads,
+# exactly how CommNetAgent shares its encoder between policy and value
+# heads). Don't do this with ClipPPOLoss's default `functional=True`:
+# torchrl "functionalizes" actor_network and critic_network SEPARATELY
+# internally, which silently breaks weight sharing between them even if
+# you passed the same nn.Module object into both TensorDictSequentials --
+# you'd end up training two independently-diverging copies of what you
+# thought was one shared encoder. If you want a shared trunk, you must
+# pass `ClipPPOLoss(..., functional=False)` and verify parameter identity
+# yourself; simpler and safer default here is two separate encoder
+# instances (2x ViT compute, but correct and matches the tutorial's
+# fully-independent actor/critic networks).
+def build_networks(cfg: MAPPOConfig, n_agents: int, n_actions: int,
+                    action_spec, device: torch.device):
+    K = _keys()
+
+    actor_encoder = TensorDictModule(
+        VitEncoderModule(cfg.hidden_dim, cfg.pretrained_encoder,
+                         gradient_checkpoint=cfg.gradient_checkpoint_encoder).to(device),
+        in_keys=[K["obs"]], out_keys=[K["hidden"]],
+    )
+    actor_head = TensorDictModule(
+        MultiAgentMLP(
+            n_agent_inputs=cfg.hidden_dim, n_agent_outputs=n_actions, n_agents=n_agents,
+            centralized=False, share_params=True, device=device,
+            depth=cfg.actor_depth, num_cells=cfg.actor_num_cells, activation_class=nn.Tanh,
+        ),
+        in_keys=[K["hidden"]], out_keys=[K["logits"]],
+    )
+    policy_module = TensorDictSequential(actor_encoder, actor_head)
+
+    policy = ProbabilisticActor(
+        module=policy_module,
+        spec=action_spec,
+        in_keys=[K["logits"]],
+        out_keys=[K["action"]],
+        distribution_class=torch.distributions.Categorical,
+        return_log_prob=True,
+    )
+
+    critic_encoder = TensorDictModule(
+        VitEncoderModule(cfg.hidden_dim, cfg.pretrained_encoder,  # separate instance -- see note above
+                         gradient_checkpoint=cfg.gradient_checkpoint_encoder).to(device),
+        in_keys=[K["obs"]], out_keys=[K["hidden"]],
+    )
+    critic_head = TensorDictModule(
+        MultiAgentMLP(
+            n_agent_inputs=cfg.hidden_dim, n_agent_outputs=1, n_agents=n_agents,
+            centralized=True,  # MAPPO: critic conditions on every agent's encoded feature
+            share_params=True, device=device,
+            depth=cfg.critic_depth, num_cells=cfg.critic_num_cells, activation_class=nn.Tanh,
+        ),
+        in_keys=[K["hidden"]], out_keys=[K["value"]],
+    )
+    value_module = TensorDictSequential(critic_encoder, critic_head)
+
+    return policy, value_module
+
+
+# --------------------------------------------------------------------------
+# Checkpointing (mirrors train.py's save_checkpoint/load_checkpoint).
+# --------------------------------------------------------------------------
+def save_checkpoint(path: Path, policy: nn.Module, value_module: nn.Module,
+                     optimizer: torch.optim.Optimizer, cfg: MAPPOConfig,
+                     frames_seen: int, mean_return: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({
+        "frames_seen": frames_seen,
+        "mean_return": mean_return,
+        "policy_state_dict": policy.state_dict(),
+        "value_state_dict": value_module.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "cfg": OmegaConf.to_container(cfg, resolve=True),
+    }, path)
+
 
 # --------------------------------------------------------------------------
 # Evaluation: same quantities as CommNet's evaluate() in train.py, plus a
@@ -124,7 +459,7 @@ def evaluate(policy, value_module, cfg: MAPPOConfig, num_episodes: int,
         deterministic: defaults to cfg.eval_deterministic if None.
         channel_noise_std: defaults to cfg.eval_channel_noise_std if None.
     """
-    validate_episode_budget(cfg)
+    _validate_episode_budget(cfg)
     device = device or torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if cfg.device == "auto" else cfg.device
     )
@@ -219,7 +554,7 @@ def evaluate(policy, value_module, cfg: MAPPOConfig, num_episodes: int,
 # Training loop.
 # --------------------------------------------------------------------------
 def train(cfg: MAPPOConfig):
-    validate_episode_budget(cfg)  # reuses train.py's episode_len == env.max_steps guard
+    _validate_episode_budget(cfg)  # reuses train.py's episode_len == env.max_steps guard
     device = torch.device(
         ("cuda" if torch.cuda.is_available() else "cpu") if cfg.device == "auto" else cfg.device
     )

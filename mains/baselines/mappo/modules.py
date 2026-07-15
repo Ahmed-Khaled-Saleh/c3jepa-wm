@@ -86,7 +86,6 @@ class VitEncoderModule(nn.Module):
 
 
 
-
 GROUP = "agent"
 
 def _keys(group: str = GROUP):

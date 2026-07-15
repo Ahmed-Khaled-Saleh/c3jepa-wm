@@ -60,7 +60,9 @@ def validate_episode_budget(cfg) -> None:
         )
 
 
-def make_torchrl_env_fn(env_cfg):
+
+
+def make_torchrl_env_fn(env_cfg, fixed_seed: int | None = None):
     """
     Builds the base gym `FindGoalEnv` with the same kwargs as train.py's
     `make_env_fn` (max_steps/joint_reward/num_obstacles/width/height, all
@@ -76,7 +78,31 @@ def make_torchrl_env_fn(env_cfg):
 
     Then adds `RewardSum` so episode-total reward is tracked automatically
     (mirrors the tutorial's transform).
+
+    fixed_seed: if set, EVERY reset of this env -- including
+    `SyncDataCollector`'s own internal auto-resets whenever an episode
+    ends during training, which this module has no direct call-site
+    access to -- is forced onto this exact seed, giving a fixed grid/
+    obstacle/spawn layout across the whole run (only the goal position
+    still varies episode to episode, via FindGoalEnv's separate
+    `_goal_rng`; see chat). A gymnasium-style `env.reset(seed=X)` only
+    fixes the layout for that ONE reset -- every later bare `env.reset()`
+    (no seed re-passed) just advances the same underlying RNG to a NEW
+    state, not back to X's state, which is what a naive `env.set_seed(X)`
+    call (torchrl's usual seeding entrypoint) would give you: a
+    reproducible SEQUENCE of different layouts, not one repeated fixed
+    layout. `rollout()`'s own `auto_reset=True` path also has no
+    parameter for injecting a seed into its internal reset call at all
+    (checked against the actual torchrl source). Monkey-patching
+    `_reset_parallel` on this specific env instance is the one place
+    that's guaranteed to see every reset the whole pipeline ever
+    triggers, regardless of caller, and override the seed unconditionally.
     """
+    import gymnasium as gym
+    import multigrid.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+    from multigrid.wrappers.external import TorchRLPettingZooWrapper
+    from torchrl.envs.libs import pettingzoo as torchrl_pettingzoo
+
     def _make():
         base_gym_env = gym.make(
             'MultiGrid-FindGoal-15x15-v0',
@@ -95,13 +121,22 @@ def make_torchrl_env_fn(env_cfg):
             group_map=None,
             use_mask=False,
         )
+
+        if fixed_seed is not None:
+            _original_reset_parallel = env._reset_parallel
+
+            def _seeded_reset_parallel(**kwargs):
+                kwargs["seed"] = fixed_seed  # override whatever was passed (or nothing)
+                return _original_reset_parallel(**kwargs)
+
+            env._reset_parallel = _seeded_reset_parallel
+
         env = TransformedEnv(
             env,
             RewardSum(in_keys=[env.reward_key], out_keys=[_keys()["episode_reward"]]),
         )
         return env
     return _make
-
 
 
 def debug_env_structure(cfg) -> None:
@@ -118,6 +153,7 @@ def debug_env_structure(cfg) -> None:
     td = env.rand_step(td)
     print("step() tensordict:\n", td)
     env.close()
+
 
 
 # --------------------------------------------------------------------------

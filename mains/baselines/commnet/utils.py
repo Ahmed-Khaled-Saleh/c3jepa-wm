@@ -31,7 +31,6 @@ def make_env_fn(env_cfg):
     truncation limit and `_reward()`'s time-decay both key off
     `max_steps`; see `EnvConfig.max_steps`'s docstring comment).
     """
-    
 
     def _make():
         env = gym.make(
@@ -46,6 +45,7 @@ def make_env_fn(env_cfg):
         )
         return PettingZooWrapper(env)
     return _make
+
 
 
 def validate_episode_budget(cfg) -> None:
@@ -90,7 +90,7 @@ def save_checkpoint(path: Path, model, optimizer: optim.Optimizer,
         "optimizer_state_dict": optimizer.state_dict(),
         "cfg": OmegaConf.to_container(cfg, resolve=True),
     }, path)
-
+    
 
 def load_checkpoint(path: Path, device: torch.device):
     """

@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
 
+
+
+
 # --------------------------------------------------------------------------
 # Config (Hydra structured config).
 # --------------------------------------------------------------------------
@@ -60,7 +63,10 @@ class TrainConfig:
     max_grad_norm: float = 0.5
 
     device: str = "auto"      # "auto" | "cuda" | "cpu"
-    seed: int | None = None
+    seed: int = 0 # int | None = None   # also fixes the env's grid/obstacle/spawn layout across the whole
+                               # run, broadcast identically to every parallel env (goal position
+                               # still varies -- see train()'s fixed_seed comment), not just
+                               # torch.manual_seed
     log_every: int = 10
     project_name: str = "commnet"  # for wandb logging
 
@@ -69,5 +75,6 @@ class TrainConfig:
     save_best: bool = True        # additionally track+overwrite a best.pt by mean_return
 
     eval_every: int = 200         # run evaluate() every N updates during training (0 disables)
-    eval_episodes: int = 20       # episodes per evaluate() call
+    eval_episodes: int = 100       # episodes per evaluate() call
     eval_deterministic: bool = True  # argmax actions during eval instead of sampling
+

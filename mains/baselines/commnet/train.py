@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import hydra
@@ -43,16 +44,24 @@ from hydra.core.config_store import ConfigStore
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 import wandb
+from model import CommNetActorCritic
 from rollout import RolloutBuffer
+# --- Adjust this import to wherever MultiAgentEnvPool actually lives in
+# --- your codebase (e.g. the nbdev-exported module). It's used as-is; we
+# --- don't redefine it here.
+from c3jepa_wm.utils.env_utils import MultiAgentEnvPool  # noqa: E402
 
-from c3jepa_wm.utils.env_utils import MultiAgentEnvPool
+import torchvision.transforms.v2 as v2
+import torch.nn.functional as F
 
-from cfg import TrainConfig
+from utils import make_env_fn, save_checkpoint, load_checkpoint, validate_episode_budget
+from cfg import TrainConfig, EnvConfig
 from module import CommNetAgent
-from utils import *
+
 
 cs = ConfigStore.instance()
 cs.store(name="base_schema", node=TrainConfig)
+
 
 # --------------------------------------------------------------------------
 # Tensor-shaped adapter around MultiAgentEnvPool.
@@ -238,10 +247,23 @@ def evaluate(model: CommNetAgent, cfg: TrainConfig, num_episodes: int,
 
     successes, any_goal, ended_early, returns, lengths = [], [], [], [], []
     batch_idx = 0
+    # A bare int here would be WRONG in two ways: MultiAgentEnvPool.reset's
+    # _broadcast_arg auto-increments a plain int across the cfg.num_envs
+    # parallel envs within one batch (env 0 gets `seed`, env 1 gets
+    # `seed+1`, ...), and re-deriving it per batch_idx (as an earlier
+    # version of this function did: `seed + batch_idx`) drifts the seed
+    # again across batches -- between the two, eval was sweeping through a
+    # different layout for nearly every episode even when a seed was
+    # passed. A list broadcasts unchanged (no increment), and reusing the
+    # SAME list every batch_idx keeps every evaluated episode on the
+    # identical fixed layout FindGoalEnv's _goal_rng-vs-np_random split
+    # already assumes (see chat) -- only the goal position varies episode
+    # to episode, exactly matching how the offline dataset was collected
+    # (collect_dataset's fixed base_seed=0).
+    fixed_seed = [seed] * cfg.num_envs if seed is not None else None
     try:
         while len(successes) < num_episodes:
-            batch_seed = (seed + batch_idx) if seed is not None else None
-            obs_np = adapter.reset(seed=batch_seed)
+            obs_np = adapter.reset(seed=fixed_seed)
             obs = torch.from_numpy(obs_np).to(device)
 
             agent_alive = np.ones((cfg.num_envs, cfg.env.num_agents), dtype=bool)
@@ -368,9 +390,21 @@ def train(cfg: TrainConfig):
                          (224, 224, 3), device)
 
     start = time.time()
+    # A bare `cfg.seed + update` was WRONG in two ways: it drifts the seed
+    # every update (never actually fixed across training, despite the
+    # name), AND MultiAgentEnvPool.reset's _broadcast_arg auto-increments
+    # a plain int across the cfg.num_envs parallel envs anyway (env 0 gets
+    # `seed`, env 1 gets `seed+1`, ...), so even a single update's batch
+    # wasn't on one shared layout. This task assumes a FIXED layout
+    # (matching how the offline dataset was collected, and how eval's
+    # layout was pinned) -- a list broadcasts the same seed to every env,
+    # unchanged, and reusing it every update (not `+ update`) keeps it
+    # fixed for the whole run. Only the goal position varies per episode
+    # (FindGoalEnv's separate, never-reseeded `_goal_rng` -- see chat).
+    fixed_seed = [cfg.seed] * cfg.num_envs if cfg.seed is not None else None
     for update in range(cfg.total_updates):
         buf.reset()
-        obs_np = adapter.reset(seed=cfg.seed + update if cfg.seed is not None else None)
+        obs_np = adapter.reset(seed=fixed_seed)
         obs = torch.from_numpy(obs_np).to(device)
         # per-agent alive tracking: an individual agent can terminate (reach
         # its own goal) before the rest of its env's episode ends, so this
@@ -434,7 +468,8 @@ def train(cfg: TrainConfig):
 
         if cfg.eval_every > 0 and update % cfg.eval_every == 0 and update > 0:
             eval_stats = evaluate(model, cfg, num_episodes=cfg.eval_episodes,
-                                   deterministic=cfg.eval_deterministic, device=device)
+                                   deterministic=cfg.eval_deterministic, device=device,
+                                   seed=cfg.seed)
             wandb.log({
                 "eval/success_rate": eval_stats["success_rate"],
                 "eval/any_goal_reached_rate": eval_stats["any_goal_reached_rate"],
@@ -481,7 +516,31 @@ def train(cfg: TrainConfig):
     # final evaluation pass, regardless of eval_every, so a completed run
     # always has a reported success rate
     final_eval = evaluate(model, cfg, num_episodes=cfg.eval_episodes,
-                           deterministic=cfg.eval_deterministic, device=device)
+                           deterministic=False, device=device,
+                           seed=cfg.seed)
+    wandb.log({
+        "eval/success_rate_sampled": final_eval["success_rate"],
+        "eval/any_goal_reached_rate_sampled": final_eval["any_goal_reached_rate"],
+        "eval/ended_early_rate_sampled": final_eval["ended_early_rate"],
+        "eval/mean_return_sampled": final_eval["mean_return"],
+        "eval/mean_episode_length_sampled": final_eval["mean_episode_length"],
+    }, step=cfg.total_updates - 1)
+    print(f"[final eval] success_rate {final_eval['success_rate']:.3f} | "
+          f"any_goal {final_eval['any_goal_reached_rate']:.3f} | "
+          f"ended_early {final_eval['ended_early_rate']:.3f} | "
+          f"mean_return {final_eval['mean_return']:.3f} | "
+          f"mean_len {final_eval['mean_episode_length']:.1f} "
+          f"({final_eval['num_episodes']} episodes)")
+    
+    # always leave a final checkpoint on disk regardless of checkpoint_every
+    save_checkpoint(ckpt_dir / "final.pt", model, optimizer, cfg, cfg.total_updates - 1,
+                     stats["mean_return"])
+    wandb.save(str(ckpt_dir / "final.pt"))  # sync the final checkpoint as a wandb artifact/file
+    
+    final_eval = evaluate(model, cfg, num_episodes=cfg.eval_episodes,
+                           deterministic=True, device=device,
+                           seed=cfg.seed)
+    
     wandb.log({
         "eval/success_rate": final_eval["success_rate"],
         "eval/any_goal_reached_rate": final_eval["any_goal_reached_rate"],
@@ -496,10 +555,7 @@ def train(cfg: TrainConfig):
           f"mean_len {final_eval['mean_episode_length']:.1f} "
           f"({final_eval['num_episodes']} episodes)")
 
-    # always leave a final checkpoint on disk regardless of checkpoint_every
-    save_checkpoint(ckpt_dir / "final.pt", model, optimizer, cfg, cfg.total_updates - 1,
-                     stats["mean_return"])
-    wandb.save(str(ckpt_dir / "final.pt"))  # sync the final checkpoint as a wandb artifact/file
+    
 
     return model
 
@@ -513,10 +569,7 @@ def main(cfg: TrainConfig) -> None:
         project=cfg.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
-    # try:
     train(cfg)
-    # finally:
-    #     wandb.finish()
 
 
 if __name__ == "__main__":

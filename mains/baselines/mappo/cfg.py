@@ -27,6 +27,7 @@ class EnvConfig:
 
 
 
+
 # --------------------------------------------------------------------------
 # Config (Hydra structured config), extending train.py's EnvConfig.
 # --------------------------------------------------------------------------
@@ -70,7 +71,9 @@ class MAPPOConfig:
 
     episode_len: int = 150           # must equal env.max_steps -- see train.py's _validate_episode_budget
     device: str = "auto"
-    seed: int | None = None
+    seed: int = 0 # | None = None          # also fixes the env's grid/obstacle/spawn layout across the
+                                       # whole run (goal position still varies -- see
+                                       # make_torchrl_env_fn's docstring), not just torch's RNG
     log_every: int = 1               # in outer collector iterations, not frames
 
     eval_every: int = 20             # outer iterations; 0 disables periodic eval
@@ -84,4 +87,4 @@ class MAPPOConfig:
 
     checkpoint_dir: str = "checkpoints"
     checkpoint_every: int = 20       # outer iterations
-    project_name: str = "commnet-mappo"
+    project_name: str = "mappo"
