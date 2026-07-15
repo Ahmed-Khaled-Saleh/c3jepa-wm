@@ -417,10 +417,10 @@ def train(cfg: MAPPOConfig):
 def main(cfg: MAPPOConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     wandb.init(name="mappo", project=cfg.project_name, config=OmegaConf.to_container(cfg, resolve=True))
-    try:
-        train(cfg)
-    finally:
-        wandb.finish()
+    # try:
+    train(cfg)
+    # finally:
+    #     wandb.finish()
 
 
 if __name__ == "__main__":

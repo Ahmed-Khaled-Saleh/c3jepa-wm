@@ -513,10 +513,10 @@ def main(cfg: TrainConfig) -> None:
         project=cfg.project_name,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
-    try:
-        train(cfg)
-    finally:
-        wandb.finish()
+    # try:
+    train(cfg)
+    # finally:
+    #     wandb.finish()
 
 
 if __name__ == "__main__":
