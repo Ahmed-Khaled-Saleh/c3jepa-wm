@@ -62,11 +62,7 @@ def main(cfg: DictConfig):
 
     # --- 7. Execution Loop ---
     trainer.fit(cfg)
-    # for epoch in range(1, cfg.pipeline.max_epochs + 1):
-    #     train_loss = trainer.train_epoch(epoch)
-    #     val_loss = trainer.validate_epoch(epoch)
-    #     trainer.scheduler.step(val_loss)
-    #     trainer.checkpoint(epoch, val_loss)
+   
 
     wandb.finish()
     # logger.finish()
