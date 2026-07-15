@@ -13,29 +13,6 @@ from multigrid.wrappers.external import TorchRLPettingZooWrapper
 from torchrl.envs.libs import pettingzoo as torchrl_pettingzoo
 
 
-def validate_episode_budget(cfg) -> None:
-    """
-    cfg.episode_len (the outer training/eval loop's step budget) and
-    cfg.env.max_steps (the env's own internal truncation limit, passed to
-    gym.make in make_env_fn) must match. If the outer loop's budget is
-    smaller, episodes get cut off before the env itself ever gets a
-    chance to truncate or for agents to reach a goal that's genuinely far
-    away -- this is exactly what silently happened before (episode_len=40
-    vs. the env's default max_steps=250), and reward/success metrics from
-    a mismatched run aren't a fair read on the policy.
-    """
-    if cfg.episode_len != cfg.env.max_steps:
-        raise ValueError(
-            f"cfg.episode_len ({cfg.episode_len}) != cfg.env.max_steps "
-            f"({cfg.env.max_steps}) -- the outer loop's step budget must "
-            f"match the env's own internal max_steps, or episodes get cut "
-            f"off before the env (and _reward()'s time-decay, which is "
-            f"computed against env.max_steps) ever sees the full horizon "
-            f"it was configured for. Set them equal, e.g. via "
-            f"`python train.py episode_len=150 env.max_steps=150`."
-        )
-
-
 # --------------------------------------------------------------------------
 # TorchRL env construction on top of train.py's gym env.
 # --------------------------------------------------------------------------

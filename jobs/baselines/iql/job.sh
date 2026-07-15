@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=project_2009050
-#SBATCH --job-name=commnet_train
+#SBATCH --job-name=iql_train
 #SBATCH --partition=gpu
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -15,7 +15,7 @@
 module --force purge
 module load pytorch
 source /scratch/project_2009050/rl/bin/activate
-cd /projappl/project_2009050/c3jepa-wm/mains/baselines/commnet
+cd /projappl/project_2009050/c3jepa-wm/mains/baselines/iql
 
 # export WANDB_START_METHOD=thread
 # ts=$(date +%Y%m%d_%H%M%S)
