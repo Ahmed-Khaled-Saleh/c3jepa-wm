@@ -7,14 +7,14 @@ __all__ = ['modulate', 'csi_to_features', 'SIGReg', 'DiscreteActionEncoder', 'Fe
            'MessageConditionedBlock', 'ConditionalBlock', 'Block', 'Transformer', 'Embedder', 'MLP', 'ARPredictor',
            'detach_clone', 'JEPA']
 
-# %% ../../nbs/02c_models.jepa.ipynb #f4181386
+# %% ../../nbs/02c_models.jepa.ipynb #86fbf907
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #2d2da9b7
+# %% ../../nbs/02c_models.jepa.ipynb #c8fe36b8
 def modulate(x, shift, scale):
     """AdaLN-zero modulation"""
     return x * (1 + scale) + shift
@@ -30,7 +30,7 @@ def csi_to_features(csi: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     return torch.stack([log_mag, angle.sin(), angle.cos()], dim=-1)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #12c6d4c0
+# %% ../../nbs/02c_models.jepa.ipynb #b693b35c
 class SIGReg(torch.nn.Module):
     """Sketch Isotropic Gaussian Regularizer (single-GPU!)"""
 
@@ -60,7 +60,7 @@ class SIGReg(torch.nn.Module):
         return statistic.mean() # average over projections and time
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #57aed670
+# %% ../../nbs/02c_models.jepa.ipynb #d6fdbb7e
 class DiscreteActionEncoder(nn.Module):
     def __init__(self, num_actions, action_emb_dim):
         super().__init__()
@@ -74,7 +74,7 @@ class DiscreteActionEncoder(nn.Module):
         return self.embedding(action)
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #c31015b0
+# %% ../../nbs/02c_models.jepa.ipynb #03a91a8d
 class FeedForward(nn.Module):
     """FeedForward network used in Transformers"""
 
@@ -93,7 +93,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #f1ee0d1a
+# %% ../../nbs/02c_models.jepa.ipynb #53c15ab1
 class Attention(nn.Module):
     """Scaled dot-product attention with causal masking"""
 
@@ -127,7 +127,7 @@ class Attention(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #eb0100a8
+# %% ../../nbs/02c_models.jepa.ipynb #4b7de11b
 class MessageConditionedBlock(nn.Module):
     def __init__(self, dim, heads, dim_head, mlp_dim, dropout=0.0, csi_feat_dim=3):
         super().__init__()
@@ -194,7 +194,7 @@ class MessageConditionedBlock(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #c3b9a0bd
+# %% ../../nbs/02c_models.jepa.ipynb #9f07baa5
 class ConditionalBlock(nn.Module):
     """Transformer block with AdaLN-zero conditioning"""
 
@@ -222,7 +222,7 @@ class ConditionalBlock(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #989e208d
+# %% ../../nbs/02c_models.jepa.ipynb #44941ed0
 class Block(nn.Module):
     """Standard Transformer block"""
 
@@ -241,7 +241,7 @@ class Block(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #ffec8324
+# %% ../../nbs/02c_models.jepa.ipynb #cd63ab7d
 class Transformer(nn.Module):
     """Standard Transformer with support for AdaLN-zero blocks"""
 
@@ -316,7 +316,7 @@ class Transformer(nn.Module):
         return x
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #43ba6a54
+# %% ../../nbs/02c_models.jepa.ipynb #5de2956c
 class Embedder(nn.Module):
     def __init__(
         self,
@@ -346,7 +346,7 @@ class Embedder(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #c08febf6
+# %% ../../nbs/02c_models.jepa.ipynb #8c5bf341
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
@@ -375,7 +375,7 @@ class MLP(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #a8306f0b
+# %% ../../nbs/02c_models.jepa.ipynb #453d4eed
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -457,7 +457,7 @@ class ARPredictor(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #a7b71d02
+# %% ../../nbs/02c_models.jepa.ipynb #5acc23f7
 """JEPA Implementation"""
 
 def detach_clone(v):
@@ -572,7 +572,7 @@ class JEPA(nn.Module):
                     step_msg_indices = torch.cat([pad, step_msg_indices], dim=1)  # (BS, HS, 49)
 
                 if step_csi is not None:                                          # NEW block
-                    step_csi = rearrange(step_csi, "b s o -> (b s) o")
+                    step_csi = rearrange(step_csi.squeeze(-1), "b s o -> (b s) o")
                     pad_steps = HS - step_csi.size(1)
                     # zero complex value = no channel reading; note this naturally maps to a very
                     # negative log-magnitude in csi_to_features, i.e. "worst-case" channel, which
