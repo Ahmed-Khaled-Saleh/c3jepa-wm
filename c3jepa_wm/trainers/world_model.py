@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMTrainer']
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #6ca496ff
+# %% ../../nbs/05a_trainers.world_model.ipynb #31001158
 import math
 import torch
 import os
@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from ..utils.checkpointer import RetrospectiveCheckpointer
 
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #c5909897
+# %% ../../nbs/05a_trainers.world_model.ipynb #1f4ad960
 class TrainerScheduler:
     def __init__(self, wm_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -35,7 +35,7 @@ class TrainerScheduler:
         
     
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #aa5f390d
+# %% ../../nbs/05a_trainers.world_model.ipynb #f1555d50
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -76,7 +76,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #9e1fa9a7
+# %% ../../nbs/05a_trainers.world_model.ipynb #0d28a2e6
 class WMTrainer(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr,
                  history_size, num_preds, lambda_sigreg, early_stop_patience=15, **kwargs):
@@ -106,7 +106,7 @@ class WMTrainer(BaseTrainer):
         
 
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #8a8a8df6
+# %% ../../nbs/05a_trainers.world_model.ipynb #dc9569e8
 @patch
 def fit(self: WMTrainer, cfg: DictConfig):
     for epoch in range(1, cfg.pipeline.max_epochs + 1):
@@ -127,7 +127,7 @@ def fit(self: WMTrainer, cfg: DictConfig):
             break
         
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #13981c46
+# %% ../../nbs/05a_trainers.world_model.ipynb #e01acb32
 @patch
 def train_epoch(self: WMTrainer, epoch):
     self.model.train()
@@ -144,7 +144,7 @@ def train_epoch(self: WMTrainer, epoch):
 
 
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #0b6a705b
+# %% ../../nbs/05a_trainers.world_model.ipynb #f33ce23d
 @patch
 def train_batch(self: WMTrainer, epoch, batch):
     B = batch["pixels"].shape[0]
@@ -172,7 +172,7 @@ def train_batch(self: WMTrainer, epoch, batch):
     return output['jepa_loss'].item()
 
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #88a42565
+# %% ../../nbs/05a_trainers.world_model.ipynb #50f52bdd
 @patch
 @torch.no_grad()
 def evaluate_epoch(self: WMTrainer, epoch):
@@ -190,7 +190,7 @@ def evaluate_epoch(self: WMTrainer, epoch):
     return avg_metrics
 
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #801139f5
+# %% ../../nbs/05a_trainers.world_model.ipynb #8ca4ba51
 @patch
 @torch.no_grad()
 def evaluate_batch(self: WMTrainer, batch):
@@ -209,7 +209,7 @@ def evaluate_batch(self: WMTrainer, batch):
     return {"val_jepa_loss": output['jepa_loss'].item()}
 
 
-# %% ../../nbs/05a_trainers.world_model.ipynb #380fd43d
+# %% ../../nbs/05a_trainers.world_model.ipynb #e0b7e767
 @patch
 def checkpoint(self: WMTrainer, epoch, val_loss):
     checkpoint_state = {
