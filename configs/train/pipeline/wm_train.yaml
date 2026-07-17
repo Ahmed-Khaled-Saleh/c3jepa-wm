@@ -16,7 +16,7 @@ img_size: 224
 embed_dim: 192
 msg_embedding_dim: 256
 num_embeddings: 256
-history_size: 7
+history_size: 10
 
 
 trainer:
