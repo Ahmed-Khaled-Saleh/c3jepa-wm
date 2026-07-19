@@ -39,7 +39,7 @@ evaluator:
 
 planner: 
   _target_: c3jepa_wm.planners.mpc.DiscreteCEMPlanner
-  horizon: ${pipeline.history_size}
+  horizon: 7 # ${pipeline.history_size}
   history_size: ${pipeline.history_size}
   action_dim: 4
   pop_size: 30
