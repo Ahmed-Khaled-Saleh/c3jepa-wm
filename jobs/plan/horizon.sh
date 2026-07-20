@@ -13,12 +13,12 @@
 #SBATCH --time=36:00:00             # Adjust based on expected runtime
 
 
-horizon=(10 15 20 25 30 35 40 45 50 55 60 70 80 90 100)  # Example alpha values for Dirichlet partitioning
+horizon=(10 15 20 25 30 35 40 45 50 55 60 70 80 90 100) 
 
 
 # 3. Safety Check: Ensure the SLURM_ARRAY_TASK_ID is within bounds
-if [ $SLURM_ARRAY_TASK_ID -ge ${#combinations[@]} ]; then
-    echo "Task ID $SLURM_ARRAY_TASK_ID out of bounds. Max index is $((${#combinations[@]} - 1))"
+if [ $SLURM_ARRAY_TASK_ID -ge ${#horizon[@]} ]; then
+    echo "Task ID $SLURM_ARRAY_TASK_ID out of bounds. Max index is $((${#horizon[@]} - 1))"
     exit 1
 fi
 
@@ -42,5 +42,4 @@ cd /projappl/project_2009050/c3jepa-wm/mains/
 
 
 # 4. Launch Hydra
-# We override the 'algorithm' and 'data' groups specifically
-python srun python eval.py pipeline.horizon=${CURRENT_HORIZON}
+python eval.py pipeline.horizon=${CURRENT_HORIZON}
