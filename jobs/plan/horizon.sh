@@ -42,4 +42,4 @@ cd /projappl/project_2009050/c3jepa-wm/mains/
 
 
 # 4. Launch Hydra
-python eval.py pipeline.horizon=${CURRENT_HORIZON}
+python eval.py +pipeline.horizon=${CURRENT_HORIZON}
