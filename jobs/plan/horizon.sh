@@ -3,14 +3,16 @@
 #SBATCH --job-name=WM_horizon_eval
 #SBATCH --output=logs/horizon_%A_%a.out
 #SBATCH --error=logs/horizon_%A_%a.err
-#SBATCH --partition=gpu
+#SBATCH --partition=gpumedium
 #SBATCH --array=0-14             # Number of algorithms (0 to N-1)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:v100:1
+#SBATCH --gres=gpu:gh200:1
 #SBATCH --time=36:00:00             # Adjust based on expected runtime
+
+# export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
 
 horizon=(10 15 20 25 30 35 40 45 50 55 60 70 80 90 100) 
@@ -36,7 +38,7 @@ echo "------------------------------------------------"
 # module load cuda
 # source activate your_env
 module --force purge
-module load pytorch
+module load python-pytorch
 source /scratch/project_2009050/rl/bin/activate
 cd /projappl/project_2009050/c3jepa-wm/mains/
 

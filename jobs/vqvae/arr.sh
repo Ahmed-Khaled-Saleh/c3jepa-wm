@@ -3,13 +3,13 @@
 #SBATCH --job-name=fedai_cifar10
 #SBATCH --output=logs/fedai_%A_%a.out
 #SBATCH --error=logs/fedai_%A_%a.err
-#SBATCH --partition=gpu
+#SBATCH --partition=gpumedium
 #SBATCH --array=0-119             # Number of algorithms (0 to N-1)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:v100:1             # Request 1 GPU per job
+#SBATCH --gres=gpu:gh200:1             # Request 1 GPU per job
 #SBATCH --time=36:00:00             # Adjust based on expected runtime
 
 # 1. Define your array of algorithms (must match the names in your cs.store)
@@ -69,7 +69,7 @@ echo "Running task $SLURM_ARRAY_TASK_ID: Algorithm=$CURRENT_ALGO on Dataset=cifa
 # module load cuda
 # source activate your_env
 module --force purge
-module load pytorch
+module load python-pytorch
 source /projappl/project_2009050/fed/bin/activate
 cd /projappl/project_2009050/fedai
 

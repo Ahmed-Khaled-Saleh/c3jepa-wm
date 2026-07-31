@@ -14,7 +14,7 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 module --force purge
-module load pytorch
+module load python-pytorch
 source /scratch/project_2009050/rl/bin/activate
 cd /projappl/project_2009050/c3jepa-wm/mains/
 
