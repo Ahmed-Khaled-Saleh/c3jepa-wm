@@ -45,6 +45,7 @@ planner:
   pop_size: 300
   topk: 30
   opt_steps: 30  
+  batch_size: 1
 
 
 eval_func:
