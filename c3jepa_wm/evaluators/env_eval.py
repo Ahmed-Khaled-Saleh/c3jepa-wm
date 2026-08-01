@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #e1b9d01c
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #a41f4288
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #40f2159a
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #df17a387
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #b51bfa15
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #ab9fd01e
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #804e675c
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #8a7ae8a5
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     ai = self.agents.index(agent)
@@ -145,7 +145,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
         "csi": csi_t0,
     }
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #02280221
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #5d255212
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
@@ -245,7 +245,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
 
     return results
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #9cdfceff
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #3f2c4417
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
@@ -313,6 +313,8 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
                 "csi_t0":      a_batch["csi"][0:1, this_t0],
             }
         episodes_list.append(episode)
+        if i >=3:
+            break
 
     n = len(episodes_list)
     if n == 0:
