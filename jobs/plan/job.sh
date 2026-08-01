@@ -12,7 +12,7 @@
 
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
-
+export HYDRA_FULL_ERROR=1
 
 module --force purge
 module load python-pytorch
