@@ -28,7 +28,7 @@ model:
     checkpoint_path: ??? # "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_34741815/agent_vqvae_trainer/best_state_step_7_acc_-0.3554.pt"
 
 evaluator:
-  _target_: c3jepa_wm.evaluators.world_model.MultiAgentGoalEvaluator
+  _target_: c3jepa_wm.evaluators.env_eval.MultiAgentGoalEvaluator
   history_size: ${pipeline.history_size} # Automatically grabs 3
   goal_offset: 15
   SNR: 10.0
@@ -48,5 +48,5 @@ planner:
 
 
 eval_func:
-  _target_: c3jepa_wm.evaluators.world_model.MultiAgentGoalEvaluator.evaluate_dataset_fixed_t0
+  _target_: c3jepa_wm.evaluators.env_eval.MultiAgentGoalEvaluator.evaluate_dataset_fixed_t0
   num_episodes: 100
