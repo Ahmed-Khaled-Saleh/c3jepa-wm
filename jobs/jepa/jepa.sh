@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1 --cpus-per-task=72
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --time=1-12:00:00
 #SBATCH --gres=gpu:gh200:1
 #SBATCH --output=./logs/out_%j_%x_%N.log  # includes time stamp (t), job ID(j), job name (x), and node name (N)
 #SBATCH --error=./logs/err_%j_%x_%N.err
