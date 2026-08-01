@@ -7,12 +7,12 @@
 #SBATCH --array=0-14             # Number of algorithms (0 to N-1)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=10
+#SBATCH --ntasks-per-node=1 --cpus-per-task=72
 #SBATCH --mem=64G
 #SBATCH --gres=gpu:gh200:1
 #SBATCH --time=36:00:00             # Adjust based on expected runtime
 
-# export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
 
 horizon=(10 15 20 25 30 35 40 45 50 55 60 70 80 90 100) 

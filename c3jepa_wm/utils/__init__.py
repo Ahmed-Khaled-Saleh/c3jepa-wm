@@ -6,11 +6,11 @@
 __all__ = ['init_data', 'get_ckp_path', 'init_model', 'init_trainer', 'init_evaluator', 'channel', 'compute_power_schedule',
            'apply_channel', 'channel_optimal', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #e9925b11
+# %% ../../nbs/06a_utils.__init__.ipynb #28b43c11
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #43edcbef
+# %% ../../nbs/06a_utils.__init__.ipynb #026a057c
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -18,20 +18,21 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #68a30b16
+# %% ../../nbs/06a_utils.__init__.ipynb #dcfe8569
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #67cc7d29
+# %% ../../nbs/06a_utils.__init__.ipynb #a90fcf4a
 def get_ckp_path(model_name):
     ckp_path = {
     "jepa":
         {
             "new_local": "/home/ahmed/Downloads/best_state_step_5_acc_-0.3516.pt",
             "local": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/0_results/checkpoints/best_state_step_7_acc_-0.3554.pt",
+            "new_roihu": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_418487/agent_WM_trainer/last_state.pt",
             "new_puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/old_c3jepa_wm/job_35447252/agent_WM_trainer/last_state.pt",
             "puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/old_c3jepa_wm/job_34741815/agent_vqvae_trainer/best_state_step_7_acc_-0.3554.pt"
         },
@@ -53,7 +54,7 @@ def get_ckp_path(model_name):
     raise FileNotFoundError(f"No checkpoint path found for {model_name} on any known hostname.")
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #33022989
+# %% ../../nbs/06a_utils.__init__.ipynb #68e9d82a
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -112,23 +113,23 @@ def init_model(cfg: DictConfig):
         }
 
         # if hasattr(model_cfg.jepa, "checkpoint_path") and model_cfg.jepa.checkpoint_path:
-        # ckpt_path = get_ckp_path("jepa")
-        # model_cfg.jepa.checkpoint_path = ckpt_path
-        # print(f"Loading pretrained JEPA weights from {model_cfg.jepa.checkpoint_path}")
+        ckpt_path = get_ckp_path("jepa")
+        model_cfg.jepa.checkpoint_path = ckpt_path
+        print(f"Loading pretrained JEPA weights from {model_cfg.jepa.checkpoint_path}")
 
-        # checkpoint = torch.load(model_cfg.jepa.checkpoint_path, map_location="cpu")
-        # models["jepa"].load_state_dict(checkpoint["wm_model_state_dict"])
+        checkpoint = torch.load(model_cfg.jepa.checkpoint_path, map_location="cpu")
+        models["jepa"].load_state_dict(checkpoint["wm_model_state_dict"])
         
         # Instantiate VQ-VAE, then immediately load its pretrained weights and freeze it
         vqvae = hydra.utils.instantiate(model_cfg.vqvae)
         
         # if hasattr(model_cfg.vqvae, "checkpoint_path") and model_cfg.vqvae.checkpoint_path:
-        # ckpt_path = get_ckp_path("vqvae")
-        # model_cfg.vqvae.checkpoint_path = ckpt_path
-        # print(f"Loading pretrained VQ-VAE weights from {model_cfg.vqvae.checkpoint_path}")
+        ckpt_path = get_ckp_path("vqvae")
+        model_cfg.vqvae.checkpoint_path = ckpt_path
+        print(f"Loading pretrained VQ-VAE weights from {model_cfg.vqvae.checkpoint_path}")
 
-        # checkpoint = torch.load(model_cfg.vqvae.checkpoint_path, map_location="cpu")
-        # vqvae.load_state_dict(checkpoint["model_state_dict"]) 
+        checkpoint = torch.load(model_cfg.vqvae.checkpoint_path, map_location="cpu")
+        vqvae.load_state_dict(checkpoint["model_state_dict"]) 
             
         # Freeze VQ-VAE because it's only used for getting latent codebooks
         vqvae.eval()
@@ -143,7 +144,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #53957caa
+# %% ../../nbs/06a_utils.__init__.ipynb #ac665ac6
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -157,7 +158,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #125b0c9d
+# %% ../../nbs/06a_utils.__init__.ipynb #c26f6f32
 def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the evaluator and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -173,7 +174,7 @@ def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #437dd0e0
+# %% ../../nbs/06a_utils.__init__.ipynb #9e512716
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -256,7 +257,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #e4b31c84
+# %% ../../nbs/06a_utils.__init__.ipynb #84bf7c3d
 def compute_power_schedule(csi, snr_db, noise_power, max_power):
     """Shared by train (channel_optimal) and eval (_extract_power_and_schedule)."""
     snr_linear = 10 ** (snr_db / 10.0)
@@ -306,7 +307,7 @@ def apply_channel(msg_indices, csi, schedule, power, device, codebook_size=256,
     return recovered[:, 0, :]
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #4f22c86d
+# %% ../../nbs/06a_utils.__init__.ipynb #617b4a12
 @torch.no_grad()
 def channel_optimal(msg_indices, csi, device, codebook_size=256, snr_db=10.0,
                      max_power=10.0, noise_power=1.0, perfect_comm=True):
@@ -380,7 +381,7 @@ def channel_optimal(msg_indices, csi, device, codebook_size=256, snr_db=10.0,
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #73b95388
+# %% ../../nbs/06a_utils.__init__.ipynb #71a7bdcc
 class PhaseTransitionChecker:
     def __init__(
         self,
