@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #a41f4288
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #cd177710
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #df17a387
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #b0ccceea
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #ab9fd01e
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #43cd5c38
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #8a7ae8a5
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #883d4553
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     ai = self.agents.index(agent)
@@ -145,7 +145,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
         "csi": csi_t0,
     }
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #5d255212
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #4e79a92a
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
@@ -169,7 +169,18 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
         goal_emb[agent] = enc["emb"][:, 0]                             # (N, D)
 
     # --- reset, then force each env to its recorded config ---
-    pool.reset(seed=0)
+    # pool.reset(seed=0)
+    goal_pos_list = episodes["goal_pos"].tolist()
+    for i in range(N):
+        gx, gy = (int(v) for v in goal_pos_list[i])
+        unwrapped = pool.envs[i].env.unwrapped
+        unwrapped._goal_rng = _FixedGoalRNG(gx, gy)
+        pool.envs[i].reset(seed=0)
+        assert tuple(unwrapped.goal_pos) == (gx, gy)
+        agent_positions = {a: episodes[a]["pos_t0"][i].tolist() for a in self.agents}
+        agent_directions = {a: int(episodes[a]["dir_t0"][i].item()) for a in self.agents}
+        set_env_state(pool, i, goal_pos_list[i], agent_positions, agent_directions, self.agents)
+        
     goal_pos_list = episodes["goal_pos"].tolist()
     logger.info(f"Setting {N} envs to their recorded states at t0...")
     for i in range(N):
@@ -245,7 +256,15 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
 
     return results
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #3f2c4417
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #93099743
+class _FixedGoalRNG:
+    def __init__(self, x, y):
+        self._vals = [int(x), int(y)]
+    def integers(self, low, high):
+        return self._vals.pop(0)
+
+
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #1b8ca186
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
