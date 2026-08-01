@@ -6,11 +6,11 @@
 __all__ = ['init_data', 'get_ckp_path', 'init_model', 'init_trainer', 'init_evaluator', 'channel', 'compute_power_schedule',
            'apply_channel', 'channel_optimal', 'PhaseTransitionChecker']
 
-# %% ../../nbs/06a_utils.__init__.ipynb #025e4d13
+# %% ../../nbs/06a_utils.__init__.ipynb #234ec0ba
 from fastcore import *
 from fastcore.utils import *
 
-# %% ../../nbs/06a_utils.__init__.ipynb #cca1eaf8
+# %% ../../nbs/06a_utils.__init__.ipynb #1cfe1565
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import torch
@@ -18,29 +18,28 @@ from torch import nn
 from einops import rearrange
 import math
 
-# %% ../../nbs/06a_utils.__init__.ipynb #a13c3baf
+# %% ../../nbs/06a_utils.__init__.ipynb #ab23b061
 def init_data(cfg: DictConfig):
     """Instantiates the correct datamodule based on the pipeline config."""
     print(f"Initializing Datamodule: {cfg.pipeline.datamodule._target_}")
     return hydra.utils.instantiate(cfg.pipeline.datamodule)
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #63100266
+# %% ../../nbs/06a_utils.__init__.ipynb #98b8384c
 def get_ckp_path(model_name):
     ckp_path = {
     "jepa":
         {
             "new_local": "/home/ahmed/Downloads/best_state_step_5_acc_-0.3516.pt",
             "local": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/0_results/checkpoints/best_state_step_7_acc_-0.3554.pt",
-            # "new_puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_35447252/agent_WM_trainer/best_state_step_12_acc_-0.3411.pt",
             "new_puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_35447252/agent_WM_trainer/last_state.pt",
             "puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_34741815/agent_vqvae_trainer/best_state_step_7_acc_-0.3554.pt"
         },
     "vqvae":
         {
             "local": "/home/ahmed/Ahmed-home/1- Projects/Research/Journal 2/code/c3jepa-wm/0_results/checkpoints/best_state_step_8_acc_-0.0057.pt",
-            "new_puhti": "/scratch/project_2009050/expirements/findgoal/checkpoints/phase-1-vqvae_pretraining/job_35447333/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt",
-            "puhti": "/scratch/project_2009050/expirements/findgoal/checkpoints/vqvae_pretraining/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt"
+            "new_puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_35447333/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt",
+            "puhti": "/projappl/project_2009050/c3jepa-wm/mains/checkpoints/c3jepa_wm/job_default_job/agent_vqvae_trainer/best_state_step_8_acc_-0.0057.pt"
         }
     }
     if model_name not in ckp_path:
@@ -54,7 +53,7 @@ def get_ckp_path(model_name):
     raise FileNotFoundError(f"No checkpoint path found for {model_name} on any known hostname.")
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #cdfb9f2e
+# %% ../../nbs/06a_utils.__init__.ipynb #1b0d79c6
 def init_model(cfg: DictConfig):
     """
     Instantiates the model(s).
@@ -144,7 +143,7 @@ def init_model(cfg: DictConfig):
 
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #d7764804
+# %% ../../nbs/06a_utils.__init__.ipynb #d8c84ce9
 def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the trainer and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -158,7 +157,7 @@ def init_trainer(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #1bcffac7
+# %% ../../nbs/06a_utils.__init__.ipynb #67c96602
 def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     """Instantiates the evaluator and injects the loaded models and data."""
     # We pass models and datamodule directly into the instantiation call 
@@ -174,7 +173,7 @@ def init_evaluator(cfg: DictConfig, data_module, models, device, slurm_jobid):
     )
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #d846db0c
+# %% ../../nbs/06a_utils.__init__.ipynb #23cb1690
 @torch.no_grad()
 def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db=10.0, no_comm= False):
     """
@@ -257,7 +256,7 @@ def channel(schedule, power, msg_indices, csi, device, codebook_size=256, snr_db
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #e39e82c0
+# %% ../../nbs/06a_utils.__init__.ipynb #bdf5ed79
 def compute_power_schedule(csi, snr_db, noise_power, max_power):
     """Shared by train (channel_optimal) and eval (_extract_power_and_schedule)."""
     snr_linear = 10 ** (snr_db / 10.0)
@@ -307,7 +306,7 @@ def apply_channel(msg_indices, csi, schedule, power, device, codebook_size=256,
     return recovered[:, 0, :]
 
 
-# %% ../../nbs/06a_utils.__init__.ipynb #b880da82
+# %% ../../nbs/06a_utils.__init__.ipynb #bcd53420
 @torch.no_grad()
 def channel_optimal(msg_indices, csi, device, codebook_size=256, snr_db=10.0,
                      max_power=10.0, noise_power=1.0, perfect_comm=True):
@@ -381,7 +380,7 @@ def channel_optimal(msg_indices, csi, device, codebook_size=256, snr_db=10.0,
 
     return recovered
 
-# %% ../../nbs/06a_utils.__init__.ipynb #fc33f4d5
+# %% ../../nbs/06a_utils.__init__.ipynb #3029c3b0
 class PhaseTransitionChecker:
     def __init__(
         self,

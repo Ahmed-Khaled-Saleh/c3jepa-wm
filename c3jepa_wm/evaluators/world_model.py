@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #d20d0e4d
+# %% ../../nbs/07c_evaluators.world_model.ipynb #93529f04
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #15759dbe
+# %% ../../nbs/07c_evaluators.world_model.ipynb #5a5501ef
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #50fbec9b
+# %% ../../nbs/07c_evaluators.world_model.ipynb #139131bd
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -109,34 +109,22 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     indices = rearrange(indices, "B H W -> B (H W)").long()  # (B, 49)
 
     # if schedule is not None and power is not None:
-    csi = csi_t0.to(self.device)
-    # schedule = torch.as_tensor(schedule, device=self.device)
-    # power = torch.as_tensor(power, device=self.device)
+    # csi = csi_t0.to(self.device)
 
-    power_schedule = compute_power_schedule(csi, self.SNR, self.noise_power, self.p_max)
-    indices = apply_channel(
-        msg_indices=indices,
-        csi=csi,
-        schedule=power_schedule[1],
-        power=power_schedule[0],
-        device=self.device,
-        no_comm=no_comm,
-    )
-
-    # indices = channel(
-    #     schedule=schedule,
-    #     power=power,
+    # power_schedule = compute_power_schedule(csi, self.SNR, self.noise_power, self.p_max)
+    # indices = apply_channel(
     #     msg_indices=indices,
     #     csi=csi,
+    #     schedule=power_schedule[1],
+    #     power=power_schedule[0],
     #     device=self.device,
-    #     snr_db=self.SNR,
     #     no_comm=no_comm,
     # )
 
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #429fdb18
+# %% ../../nbs/07c_evaluators.world_model.ipynb #f8c70b3b
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     pixels = episodes[agent]["pixels_hist"]
@@ -158,7 +146,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #5e4c1146
+# %% ../../nbs/07c_evaluators.world_model.ipynb #4a734235
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool: MultiAgentEnvPool, t0s, max_steps=150):
@@ -280,7 +268,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #30e6e467
+# %% ../../nbs/07c_evaluators.world_model.ipynb #639e0d0f
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
