@@ -49,5 +49,5 @@ planner:
 
 
 eval_func:
-  _target_: c3jepa_wm.evaluators.env_eval.MultiAgentGoalEvaluator.evaluate_dataset_fixed_t0
-  num_episodes: 100
+  _target_: c3jepa_wm.evaluators.env_eval.MultiAgentGoalEvaluator.oracle_rank_test # evaluate_dataset_fixed_t0
+  num_episodes: 8

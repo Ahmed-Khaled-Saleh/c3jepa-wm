@@ -74,7 +74,9 @@ def main(cfg: DictConfig):
 
     # --- 7. Execution Loop ---
     # evaluator.evaluate_dataset()
-    hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator, make_env= make_env)
+    evaluator.oracle_rank_test(num_episodes=8, horizon=15, use_message=True)
+    evaluator.oracle_rank_test(num_episodes=8, horizon=15, use_message=False)
+    # hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator, make_env= make_env)
     
     wandb.finish()
 

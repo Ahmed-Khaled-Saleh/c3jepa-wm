@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['COLLECTION_SEED', 'MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #85c66d11
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #bc0c6764
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #694e832a
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #52fa0347
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #4c6341c1
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #d88d6a03
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #5564e3c8
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #15c32096
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     ai = self.agents.index(agent)
@@ -145,7 +145,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
         "csi": csi_t0,
     }
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #9c932e69
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #f4ecb35c
 COLLECTION_SEED = 0   # <-- the seed your data-collection script used at env.reset()
 
 class _FixedGoalRNG:
@@ -155,7 +155,7 @@ class _FixedGoalRNG:
     def integers(self, low, high):
         return self._vals.pop(0)
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #4e8a0167
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #6fcf088b
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
@@ -237,6 +237,20 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
         _, rewards, terminateds, truncateds, stacked_infos = pool.step(
             actions, mask=env_mask, noop_action=self.noop_action
         )
+        # ---- DIAGNOSTIC: ground-truth positions vs goal ----
+        for i in range(N):
+            if not env_mask[i]:
+                continue
+            for agent in self.agents:
+                pos = tuple(int(v) for v in pool.envs[i].env.unwrapped.agents[agent].state.pos)
+                gp = goal_pos_list[i]
+                d = abs(pos[0] - gp[0]) + abs(pos[1] - gp[1])
+                logger.info(
+                    f"[DIAG] step {real_step} env {i} agent {agent}: "
+                    f"pos={pos} act={actions[agent][i]} L1_to_goal={d} "
+                    f"term={bool(terminateds[agent][i])}"
+                )
+        # ---- END DIAGNOSTIC ----
 
         for agent in self.agents:
             for i in range(N):
@@ -279,7 +293,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
 
     return results
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #688f775d
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #49319382
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
@@ -372,6 +386,16 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
     # fixed num_envs. No per-chunk pool rebuilding. --
     pool = MultiAgentEnvPool([make_env for _ in range(n)], agents=self.agents)
 
+    # ---- DIAGNOSTIC: wrapper chain + action semantics (one-off) ----
+    from multigrid.core.actions import NavigationAction   # adjust import path if needed
+    print("Wrapper chain:", pool.envs[0].env)
+    print("NavigationAction mapping:",
+          [(a.name, int(a)) for a in NavigationAction])
+    print("noop_action =", self.noop_action,
+          "->", NavigationAction(self.noop_action).name)
+    # ---- END DIAGNOSTIC ----
+
+
     per_agent_step_dist = {agent: defaultdict(list) for agent in self.agents}
     per_agent_step_success = {agent: defaultdict(list) for agent in self.agents}
 
@@ -423,3 +447,70 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
 
     return curves
 
+
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #4cc86901
+@patch
+@torch.no_grad()
+def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
+                     num_random=256, use_message=True):
+    """
+    For each episode/agent: rank the RECORDED (goal-reaching) action sequence
+    against random sequences under model.get_cost. Rank near 0 => cost sees
+    the goal in action space. Rank near num_random/2 => cost is uninformative.
+    """
+    dataset = self.data_module.val_dataloader()
+    H = self.history_size
+    ranks = {agent: [] for agent in self.agents}
+
+    n_done = 0
+    for batch in dataset:
+        if n_done >= num_episodes:
+            break
+        length = batch["length"][0].item()
+        t0 = H - 1
+        if t0 + 1 + horizon > length:
+            continue  # need `horizon` recorded actions after t0
+        n_done += 1
+
+        for ai, agent in enumerate(self.agents):
+            partner = [a for a in self.agents if a != agent][0]
+            a_batch = batch[self.dataset_agent_keys[agent]]
+            p_batch = batch[self.dataset_agent_keys[partner]]
+
+            info = {
+                "pixels": a_batch["pixels"][0:1, t0 - H + 1: t0 + 1].to(self.device),
+                "action": a_batch["action"][0:1, t0 - H + 1: t0 + 1].to(self.device),
+                "goal":   batch["goal_obs"][0, ai].unsqueeze(0).to(self.device),
+            }
+            if use_message:
+                csi_t0 = p_batch["csi"][0:1, t0].to(self.device)
+                info["msg_indices"] = self._encode_message(
+                    p_batch["pov_seq_vqvae"][0:1, t0], csi_t0
+                ).to(self.device)
+                info["csi"] = csi_t0
+
+            # candidate 0 = recorded actions; 1..num_random = random
+            true_acts = a_batch["action"][0:1, t0 + 1: t0 + 1 + horizon]      # (1, horizon)
+            rand_acts = torch.randint(0, 4, (num_random, horizon))
+            cand = torch.cat([true_acts, rand_acts], dim=0).unsqueeze(0)      # (1, S, horizon)
+
+            hist = info["action"].unsqueeze(1).expand(1, num_random + 1, H)   # (1, S, H)
+            full = torch.cat([hist.cpu(), cand], dim=2).long().to(self.device)
+
+            cand_info = {
+                k: (v.unsqueeze(1).expand(1, num_random + 1, *v.shape[1:]).to(self.device)
+                    if torch.is_tensor(v) else v)
+                for k, v in info.items()
+            }
+            cost = self.model.get_cost(cand_info, full)                        # (1, S)
+            rank = int((cost[0] < cost[0, 0]).sum().item())                    # 0 = best
+            ranks[agent].append(rank)
+            logger.info(f"[ORACLE] ep {n_done} agent {agent}: rank {rank}/{num_random} "
+                        f"(oracle cost {cost[0,0].item():.4f}, "
+                        f"random median {cost[0,1:].median().item():.4f})")
+
+    for agent in self.agents:
+        r = np.array(ranks[agent])
+        print(f"agent {agent}: median rank {np.median(r):.0f}/{num_random}, "
+              f"top-10% hits {(r < num_random * 0.10).mean():.0%}, ranks={r.tolist()}")
+    return ranks
