@@ -76,6 +76,7 @@ def main(cfg: DictConfig):
     # evaluator.evaluate_dataset()
     # evaluator.oracle_rank_test(num_episodes=8, horizon=15, use_message=True)
     # evaluator.oracle_rank_test(num_episodes=8, horizon=15, use_message=False)
+    evaluator.oracle_rank_test(num_episodes=16, horizon=15)
     evaluator.basin_sweep()
     # hydra.utils.call(config= cfg.pipeline.eval_func, self= evaluator, make_env= make_env)
     
