@@ -7,14 +7,14 @@ __all__ = ['modulate', 'csi_to_features', 'SIGReg', 'DiscreteActionEncoder', 'Fe
            'MessageConditionedBlock', 'ConditionalBlock', 'Block', 'Transformer', 'Embedder', 'MLP', 'ARPredictor',
            'detach_clone', 'JEPA']
 
-# %% ../../nbs/02c_models.jepa.ipynb #b4d4b02e
+# %% ../../nbs/02c_models.jepa.ipynb #757cf0bc
 import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #4d589b4c
+# %% ../../nbs/02c_models.jepa.ipynb #86f940ca
 def modulate(x, shift, scale):
     """AdaLN-zero modulation"""
     return x * (1 + scale) + shift
@@ -30,7 +30,7 @@ def csi_to_features(csi: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     return torch.stack([log_mag, angle.sin(), angle.cos()], dim=-1)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #3548c135
+# %% ../../nbs/02c_models.jepa.ipynb #7c3c5104
 class SIGReg(torch.nn.Module):
     """Sketch Isotropic Gaussian Regularizer (single-GPU!)"""
 
@@ -60,7 +60,7 @@ class SIGReg(torch.nn.Module):
         return statistic.mean() # average over projections and time
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #156bb15f
+# %% ../../nbs/02c_models.jepa.ipynb #c8a69510
 class DiscreteActionEncoder(nn.Module):
     def __init__(self, num_actions, action_emb_dim):
         super().__init__()
@@ -74,7 +74,7 @@ class DiscreteActionEncoder(nn.Module):
         return self.embedding(action)
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #4b559ebe
+# %% ../../nbs/02c_models.jepa.ipynb #8a34041b
 class FeedForward(nn.Module):
     """FeedForward network used in Transformers"""
 
@@ -93,7 +93,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #756c424d
+# %% ../../nbs/02c_models.jepa.ipynb #97087144
 class Attention(nn.Module):
     """Scaled dot-product attention with causal masking"""
 
@@ -127,7 +127,7 @@ class Attention(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #bba607b8
+# %% ../../nbs/02c_models.jepa.ipynb #deca87dd
 class MessageConditionedBlock(nn.Module):
     def __init__(self, dim, heads, dim_head, mlp_dim, dropout=0.0, csi_feat_dim=3):
         super().__init__()
@@ -194,7 +194,7 @@ class MessageConditionedBlock(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #37d42174
+# %% ../../nbs/02c_models.jepa.ipynb #01f13b68
 class ConditionalBlock(nn.Module):
     """Transformer block with AdaLN-zero conditioning"""
 
@@ -222,7 +222,7 @@ class ConditionalBlock(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #64d6262f
+# %% ../../nbs/02c_models.jepa.ipynb #e743b16b
 class Block(nn.Module):
     """Standard Transformer block"""
 
@@ -241,7 +241,7 @@ class Block(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #5266de7b
+# %% ../../nbs/02c_models.jepa.ipynb #b83522be
 class Transformer(nn.Module):
     """Standard Transformer with support for AdaLN-zero blocks"""
 
@@ -316,7 +316,7 @@ class Transformer(nn.Module):
         return x
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #d83f390b
+# %% ../../nbs/02c_models.jepa.ipynb #fd31a399
 class Embedder(nn.Module):
     def __init__(
         self,
@@ -346,7 +346,7 @@ class Embedder(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #b9b3be30
+# %% ../../nbs/02c_models.jepa.ipynb #51eb3b20
 class MLP(nn.Module):
     """Simple MLP with optional normalization and activation"""
 
@@ -375,7 +375,7 @@ class MLP(nn.Module):
 
 
 
-# %% ../../nbs/02c_models.jepa.ipynb #4ef57f0e
+# %% ../../nbs/02c_models.jepa.ipynb #97fcbb82
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -457,7 +457,7 @@ class ARPredictor(nn.Module):
         return x
     
 
-# %% ../../nbs/02c_models.jepa.ipynb #62a5c1b8
+# %% ../../nbs/02c_models.jepa.ipynb #e19d4fea
 """JEPA Implementation"""
 
 def detach_clone(v):
@@ -604,20 +604,35 @@ class JEPA(nn.Module):
         return info
 
 
+    # def criterion(self, info_dict: dict):
+    #     """Compute the cost between predicted embeddings and goal embeddings."""
+    #     pred_emb = info_dict["predicted_emb"]  # (B,S, T-1, dim)
+    #     goal_emb = info_dict["goal_emb"]  # (B, S, T, dim)
+
+    #     goal_emb = goal_emb[..., -1:, :].expand_as(pred_emb)
+
+    #     # return last-step cost per action candidate
+    #     cost = F.mse_loss(
+    #         pred_emb[..., -1:, :],
+    #         goal_emb[..., -1:, :].detach(),
+    #         reduction="none",
+    #     ).sum(dim=tuple(range(2, pred_emb.ndim)))  # (B, S)
+
+    #     return cost
+
     def criterion(self, info_dict: dict):
-        """Compute the cost between predicted embeddings and goal embeddings."""
-        pred_emb = info_dict["predicted_emb"]  # (B,S, T-1, dim)
-        goal_emb = info_dict["goal_emb"]  # (B, S, T, dim)
+        """Cost = min over imagined steps of embedding distance to goal."""
+        pred_emb = info_dict["predicted_emb"]      # (B, S, T, D)
+        goal_emb = info_dict["goal_emb"]           # (B, S=1, T=1, D)
 
-        goal_emb = goal_emb[..., -1:, :].expand_as(pred_emb)
+        goal = goal_emb[..., -1:, :].expand_as(pred_emb).detach()
+        per_step = F.mse_loss(pred_emb, goal, reduction="none").sum(-1)  # (B, S, T)
 
-        # return last-step cost per action candidate
-        cost = F.mse_loss(
-            pred_emb[..., -1:, :],
-            goal_emb[..., -1:, :].detach(),
-            reduction="none",
-        ).sum(dim=tuple(range(2, pred_emb.ndim)))  # (B, S)
+        # exclude the history steps: only score imagined future states
+        H = 3  # self.history_size if you store it on the model; matches rollout's history
+        per_step = per_step[..., H:]
 
+        cost = per_step.min(dim=-1).values          # (B, S)
         return cost
 
     def get_cost(self, info_dict: dict, action_candidates: torch.Tensor):

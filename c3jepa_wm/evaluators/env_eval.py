@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['COLLECTION_SEED', 'MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #605f147b
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #5adfa701
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #e5a86389
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #6056e6a5
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #088d844f
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #4a07af33
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #8ddc1434
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #41f1f80a
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     ai = self.agents.index(agent)
@@ -145,7 +145,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
         "csi": csi_t0,
     }
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #260597e2
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #b028a795
 COLLECTION_SEED = 0   # <-- the seed your data-collection script used at env.reset()
 
 class _FixedGoalRNG:
@@ -155,7 +155,7 @@ class _FixedGoalRNG:
     def integers(self, low, high):
         return self._vals.pop(0)
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #c822270f
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #36d412f2
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
@@ -293,7 +293,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
 
     return results
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #98823223
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #8183d583
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
@@ -340,9 +340,24 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
             break
 
         length = batch["length"][0].item()
-        this_t0 = (H - 1) if t0 is None else t0
+        length = batch["length"][0].item()
+
+        sa = {a: int(batch[self.dataset_agent_keys[a]]["success_at"].item())
+              for a in self.agents}
+        fast = min(self.agents, key=lambda a: sa[a])
+
+        if t0 is None:
+            this_t0 = H - 1                       # original behavior
+        elif t0 < 0:
+            # NEW: negative t0 = "start |t0| steps before the faster agent's success"
+            this_t0 = sa[fast] - 1 + t0           # e.g. t0=-10 → 10 steps out
+            if this_t0 < H - 1:
+                print(f"Skipping episode {i}: path too short for offset {t0}")
+                continue
+        else:
+            this_t0 = t0
         if this_t0 >= length:
-            logger.info(f"Skipping episode {i}: length={length} too short for t0={this_t0}")
+            print(f"Skipping episode {i}: length={length} too short for t0={this_t0}")
             continue
 
         episode = {
@@ -448,7 +463,7 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
     return curves
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #0a449f22
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #5b897520
 @patch
 @torch.no_grad()
 def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
@@ -468,57 +483,65 @@ def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
             break
         length = batch["length"][0].item()
 
-        # faster agent = the one whose success defines `length`
+        # only the FASTER agent's success segment is inside the loaded data
         sa = {a: int(batch[self.dataset_agent_keys[a]]["success_at"].item())
               for a in self.agents}
         agent = min(self.agents, key=lambda a: sa[a])
         partner = [a for a in self.agents if a != agent][0]
 
-        # anchor: recorded segment ENDS one step before success (last loaded index)
-        t0 = sa[agent] - 1 - horizon
+        t0 = sa[agent] - 1 - horizon          # segment ends adjacent to goal
         if t0 < H - 1:
-            continue   # path shorter than horizon+history; skip
+            continue
         n_done += 1
 
-        for ai, agent in enumerate(self.agents):
-            partner = [a for a in self.agents if a != agent][0]
-            a_batch = batch[self.dataset_agent_keys[agent]]
-            p_batch = batch[self.dataset_agent_keys[partner]]
+        a_batch = batch[self.dataset_agent_keys[agent]]
+        p_batch = batch[self.dataset_agent_keys[partner]]
+        ai = self.agents.index(agent)
 
-            info = {
-                "pixels": a_batch["pixels"][0:1, t0 - H + 1: t0 + 1].to(self.device),
-                "action": a_batch["action"][0:1, t0 - H + 1: t0 + 1].to(self.device),
-                "goal":   batch["goal_obs"][0, ai].unsqueeze(0).to(self.device),
-            }
-            if use_message:
-                csi_t0 = p_batch["csi"][0:1, t0].to(self.device)
-                info["msg_indices"] = self._encode_message(
-                    p_batch["pov_seq_vqvae"][0:1, t0], csi_t0
-                ).to(self.device)
-                info["csi"] = csi_t0
+        info = {
+            "pixels": a_batch["pixels"][0:1, t0 - H + 1: t0 + 1].to(self.device),
+            "action": a_batch["action"][0:1, t0 - H + 1: t0 + 1].to(self.device),
+            "goal":   batch["goal_obs"][0, ai].unsqueeze(0).to(self.device),
+        }
+        if use_message:
+            csi_t0 = p_batch["csi"][0:1, t0].to(self.device)
+            info["msg_indices"] = self._encode_message(
+                p_batch["pov_seq_vqvae"][0:1, t0], csi_t0
+            ).to(self.device)
+            info["csi"] = csi_t0
 
-            # candidate 0 = recorded actions; 1..num_random = random
-            true_acts = a_batch["action"][0:1, t0 + 1: t0 + 1 + horizon]      # (1, horizon)
-            rand_acts = torch.randint(0, 4, (num_random, horizon))
-            cand = torch.cat([true_acts, rand_acts], dim=0).unsqueeze(0)      # (1, S, horizon)
+        true_acts = a_batch["action"][0:1, t0 + 1: t0 + 1 + horizon]
+        rand_acts = torch.randint(0, 4, (num_random, horizon))
+        cand = torch.cat([true_acts, rand_acts], dim=0).unsqueeze(0)
+        hist = info["action"].unsqueeze(1).expand(1, num_random + 1, H)
+        full = torch.cat([hist.cpu(), cand], dim=2).long().to(self.device)
 
-            hist = info["action"].unsqueeze(1).expand(1, num_random + 1, H)   # (1, S, H)
-            full = torch.cat([hist.cpu(), cand], dim=2).long().to(self.device)
-
-            cand_info = {
-                k: (v.unsqueeze(1).expand(1, num_random + 1, *v.shape[1:]).to(self.device)
-                    if torch.is_tensor(v) else v)
-                for k, v in info.items()
-            }
-            cost = self.model.get_cost(cand_info, full)                        # (1, S)
-            rank = int((cost[0] < cost[0, 0]).sum().item())                    # 0 = best
-            ranks[agent].append(rank)
-            logger.info(f"[ORACLE] ep {n_done} agent {agent}: rank {rank}/{num_random} "
-                        f"(oracle cost {cost[0,0].item():.4f}, "
-                        f"random median {cost[0,1:].median().item():.4f})")
+        cand_info = {
+            k: (v.unsqueeze(1).expand(1, num_random + 1, *v.shape[1:]).to(self.device)
+                if torch.is_tensor(v) else v)
+            for k, v in info.items()
+        }
+        cost = self.model.get_cost(cand_info, full)
+        rank = int((cost[0] < cost[0, 0]).sum().item())
+        ranks[agent].append(rank)
+        logger.info(f"[ORACLE] ep {n_done} agent {agent} (sa={sa[agent]}, t0={t0}): "
+                    f"rank {rank}/{num_random} "
+                    f"(oracle {cost[0,0].item():.1f}, rand-med {cost[0,1:].median().item():.1f})")
 
     for agent in self.agents:
         r = np.array(ranks[agent])
         print(f"agent {agent}: median rank {np.median(r):.0f}/{num_random}, "
               f"top-10% hits {(r < num_random * 0.10).mean():.0%}, ranks={r.tolist()}")
     return ranks
+
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #1f442178
+@patch
+@torch.no_grad()
+def basin_sweep(self: MultiAgentGoalEvaluator, ks=(5, 10, 15, 20, 30),
+                num_episodes=16, num_random=256):
+    """Oracle rank vs distance-to-goal: for each k, anchor t0 = success_at-1-k
+    and use the k-step goal-reaching suffix as candidate 0."""
+    for k in ks:
+        print(f"\n===== k = {k} steps from goal =====")
+        self.oracle_rank_test(num_episodes=num_episodes, horizon=k,
+                              num_random=num_random, use_message=False)
