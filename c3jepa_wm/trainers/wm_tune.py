@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['TrainerScheduler', 'BaseTrainer', 'WMFinetuner']
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #dad80fee
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #9f4b7514
 import math
 import torch
 import os
@@ -24,7 +24,7 @@ from ..utils.checkpointer import RetrospectiveCheckpointer
 from ..utils import channel, channel_optimal, compute_power_schedule, apply_channel
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #a265bf7f
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #e9a0f632
 class TrainerScheduler:
     def __init__(self, wm_optimizer):
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -36,7 +36,7 @@ class TrainerScheduler:
         
     
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #5c07343e
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #54c34aa5
 class BaseTrainer:
     def __init__(self, 
                  data_module, 
@@ -77,7 +77,7 @@ class BaseTrainer:
         raise NotImplementedError("validate method must be implemented by subclasses.")
     
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #2eaf7ae4
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #a47d9f8d
 class WMFinetuner(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr,
                  history_size, num_preds, lambda_sigreg, early_stop_patience=15, **kwargs):
@@ -111,7 +111,7 @@ class WMFinetuner(BaseTrainer):
         
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #77935d75
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #81a1405c
 @patch
 def fit(self: WMFinetuner, cfg: DictConfig):
     for epoch in range(1, cfg.pipeline.max_epochs + 1):
@@ -133,7 +133,7 @@ def fit(self: WMFinetuner, cfg: DictConfig):
         
         
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #b8c72546
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #c03947b5
 @patch
 @torch.no_grad()
 def get_msg_indices(self: WMFinetuner, sender_pov_seq):
@@ -151,7 +151,7 @@ def get_msg_indices(self: WMFinetuner, sender_pov_seq):
 
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #1b1ff6a4
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #0481ade3
 @patch
 def train_epoch(self: WMFinetuner, epoch):
     self.model.train()
@@ -174,7 +174,7 @@ def train_epoch(self: WMFinetuner, epoch):
     return avg_loss_jepa
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #f89c3b98
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #602e8fd1
 @patch
 def train_batch(self: WMFinetuner, epoch, batch, perfect_comm):
     B = batch["sender_pov"].shape[0]
@@ -222,7 +222,7 @@ def train_batch(self: WMFinetuner, epoch, batch, perfect_comm):
     return output['jepa_loss'].item()
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #793a6820
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #4d44dc96
 @patch
 @torch.no_grad()
 def evaluate_epoch(self: WMFinetuner, epoch):
@@ -246,7 +246,7 @@ def evaluate_epoch(self: WMFinetuner, epoch):
     return avg_metrics
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #ec81bfa7
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #6b1d329c
 @patch
 @torch.no_grad()
 def evaluate_batch(self: WMFinetuner, batch, perfect_comm):
@@ -288,7 +288,7 @@ def evaluate_batch(self: WMFinetuner, batch, perfect_comm):
     }
 
 
-# %% ../../nbs/05c_trainers.wm_tune.ipynb #03be3120
+# %% ../../nbs/05c_trainers.wm_tune.ipynb #e473e084
 @patch
 def checkpoint(self: WMFinetuner, epoch, val_loss):
 
