@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #7e2a20f2
+# %% ../../nbs/07c_evaluators.world_model.ipynb #a9da47f4
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #dc8b21aa
+# %% ../../nbs/07c_evaluators.world_model.ipynb #aeef9b57
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #6f02a8b1
+# %% ../../nbs/07c_evaluators.world_model.ipynb #c327af6c
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #5a23c701
+# %% ../../nbs/07c_evaluators.world_model.ipynb #426c301f
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     pixels = episodes[agent]["pixels_hist"]
@@ -146,7 +146,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #b44b574b
+# %% ../../nbs/07c_evaluators.world_model.ipynb #58d17e55
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool: MultiAgentEnvPool, t0s, max_steps=150):
@@ -268,7 +268,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict, pool:
 
 
 
-# %% ../../nbs/07c_evaluators.world_model.ipynb #d299aa36
+# %% ../../nbs/07c_evaluators.world_model.ipynb #bd81c9c5
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],

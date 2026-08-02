@@ -6,7 +6,7 @@
 __all__ = ['MultiAgentGoalEvaluator', 'set_env_state', 'get_all_agent_plans', 'build_joint_step_actions',
            'check_agent_reached_goal', 'evaluate_planner_in_env', 'check_all_agents_reached_goal']
 
-# %% ../../nbs/07a_evaluators.control.ipynb #60d5db03
+# %% ../../nbs/07a_evaluators.control.ipynb #19b6d0d5
 from collections import defaultdict
 import torch
 import torch.nn as nn
@@ -18,7 +18,7 @@ import wandb
 from fastcore.utils import patch
 from ..utils import channel
 
-# %% ../../nbs/07a_evaluators.control.ipynb #39fe709a
+# %% ../../nbs/07a_evaluators.control.ipynb #9f27b217
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative setting.
@@ -253,7 +253,7 @@ class MultiAgentGoalEvaluator:
         return {"per_episode": all_results, "summary": summary}
     
 
-# %% ../../nbs/07a_evaluators.control.ipynb #74cc1bb4
+# %% ../../nbs/07a_evaluators.control.ipynb #3bdf5422
 def set_env_state(env, goal_pos, agent_positions, agent_directions, agent_env_indices):
     """
     Directly overwrites env state to match a recorded episode's configuration
@@ -283,7 +283,7 @@ def set_env_state(env, goal_pos, agent_positions, agent_directions, agent_env_in
         agent.state.dir = int(agent_directions[idx])
         
 
-# %% ../../nbs/07a_evaluators.control.ipynb #58815a74
+# %% ../../nbs/07a_evaluators.control.ipynb #876421f1
 @patch
 @torch.no_grad()
 def evaluate_episode_fixed_t0(self: MultiAgentGoalEvaluator, episode, env, t0, max_steps=150):
@@ -369,7 +369,7 @@ def evaluate_episode_fixed_t0(self: MultiAgentGoalEvaluator, episode, env, t0, m
 
     return results
 
-# %% ../../nbs/07a_evaluators.control.ipynb #20491823
+# %% ../../nbs/07a_evaluators.control.ipynb #7f132bbc
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, env,
@@ -451,7 +451,7 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, env,
 
     return curves
 
-# %% ../../nbs/07a_evaluators.control.ipynb #c463bea2
+# %% ../../nbs/07a_evaluators.control.ipynb #703eada3
 @patch
 @torch.no_grad()
 def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values=None, t0_stride=5):
@@ -487,7 +487,7 @@ def evaluate_episode_over_time(self: MultiAgentGoalEvaluator, episode, t0_values
 
     return results
 
-# %% ../../nbs/07a_evaluators.control.ipynb #70a3ed88
+# %% ../../nbs/07a_evaluators.control.ipynb #f82ab397
 @patch
 @torch.no_grad()
 def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None, t0_stride=5):
@@ -555,7 +555,7 @@ def evaluate_dataset_over_time(self: MultiAgentGoalEvaluator, num_episodes=None,
 
     return curves
 
-# %% ../../nbs/07a_evaluators.control.ipynb #a7b179c6
+# %% ../../nbs/07a_evaluators.control.ipynb #c2ca0b43
 def get_all_agent_plans(evaluator, episode, t0):
     """
     Run each agent's own CEM planner independently (mirrors evaluate_episode's
@@ -576,7 +576,7 @@ def get_all_agent_plans(evaluator, episode, t0):
         infos[agent] = info
     return plans, infos
 
-# %% ../../nbs/07a_evaluators.control.ipynb #31bb8803
+# %% ../../nbs/07a_evaluators.control.ipynb #ef1d7619
 def build_joint_step_actions(plans, agent_order, batch_idx=0):
     """
     plans: dict[agent -> (B, horizon) long tensor], one entry per agent
@@ -599,7 +599,7 @@ def build_joint_step_actions(plans, agent_order, batch_idx=0):
         step_actions.append(step_dict)
     return step_actions
 
-# %% ../../nbs/07a_evaluators.control.ipynb #e36d9260
+# %% ../../nbs/07a_evaluators.control.ipynb #9df3b8c1
 def check_agent_reached_goal(env, agent_idx, seed, history_actions, planned_actions, goal_pos=None):
     """
     Ground-truth check: replay an episode's history in the real environment, then
@@ -663,7 +663,7 @@ def check_agent_reached_goal(env, agent_idx, seed, history_actions, planned_acti
         "terminated_flag": terminated_flag,
     }
 
-# %% ../../nbs/07a_evaluators.control.ipynb #5708d49e
+# %% ../../nbs/07a_evaluators.control.ipynb #dce17f3b
 def evaluate_planner_in_env(env, evaluator, episode, t0, seed, agent_order):
     """
     Full pipeline: get each agent's CEM plan at t0, then replay history + execute
@@ -695,7 +695,7 @@ def evaluate_planner_in_env(env, evaluator, episode, t0, seed, agent_order):
 
     return results
 
-# %% ../../nbs/07a_evaluators.control.ipynb #afdf13cd
+# %% ../../nbs/07a_evaluators.control.ipynb #a17d31ce
 def check_all_agents_reached_goal(env, agent_env_indices, seed, history_actions, planned_actions, goal_pos=None):
     obs, info = env.reset(seed=seed)
     if goal_pos is None:

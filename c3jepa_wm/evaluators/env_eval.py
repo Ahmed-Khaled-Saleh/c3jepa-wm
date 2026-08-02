@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['COLLECTION_SEED', 'MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #bc0c6764
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #605f147b
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #52fa0347
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #e5a86389
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #d88d6a03
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #088d844f
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #15c32096
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #8ddc1434
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     ai = self.agents.index(agent)
@@ -145,7 +145,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
         "csi": csi_t0,
     }
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #f4ecb35c
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #260597e2
 COLLECTION_SEED = 0   # <-- the seed your data-collection script used at env.reset()
 
 class _FixedGoalRNG:
@@ -155,7 +155,7 @@ class _FixedGoalRNG:
     def integers(self, low, high):
         return self._vals.pop(0)
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #6fcf088b
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #c822270f
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
@@ -293,7 +293,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
 
     return results
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #49319382
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #98823223
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
@@ -448,7 +448,7 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
     return curves
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #4cc86901
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #0a449f22
 @patch
 @torch.no_grad()
 def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
@@ -467,9 +467,17 @@ def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
         if n_done >= num_episodes:
             break
         length = batch["length"][0].item()
-        t0 = H - 1
-        if t0 + 1 + horizon > length:
-            continue  # need `horizon` recorded actions after t0
+
+        # faster agent = the one whose success defines `length`
+        sa = {a: int(batch[self.dataset_agent_keys[a]]["success_at"].item())
+              for a in self.agents}
+        agent = min(self.agents, key=lambda a: sa[a])
+        partner = [a for a in self.agents if a != agent][0]
+
+        # anchor: recorded segment ENDS one step before success (last loaded index)
+        t0 = sa[agent] - 1 - horizon
+        if t0 < H - 1:
+            continue   # path shorter than horizon+history; skip
         n_done += 1
 
         for ai, agent in enumerate(self.agents):
