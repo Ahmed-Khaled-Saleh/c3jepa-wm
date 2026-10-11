@@ -1,0 +1,66 @@
+# configs/comm/config.yaml: the data, training and calibration of the learned power control
+# (c3jepa_wm.comm.channel_data, c3jepa_wm.comm.power_control), run by mains/comm_power.py.
+#   python comm_power.py stage=collect
+#   python comm_power.py stage=trace shard.index=0 shard.count=10      # one of 10 tracing jobs
+#   python comm_power.py stage=train link.fading=rayleigh calibration.target=0.99
+#   python comm_power.py env.num_obstacles=0 env.size=9 data_dir=./comm_data_9x9
+defaults:
+  - env: findgoal
+  - _self_
+
+stage: all                     # collect | trace | train | evaluate | all (in this order)
+data_dir: ./comm_data          # trajectories/, layouts/ (pairs_<seed>.npz or layout_<seed>.npz), power_control.pkl, results.json, evaluation(_snr).png
+
+layouts:                       # reset seeds [start, stop): train the predictor / choose κ and τ / judge
+  train: [0, 200]
+  calibration: [200, 230]
+  test: [230, 260]
+
+shard:                         # trace and collect only every count-th layout from index (e.g. SLURM arrays)
+  index: 0
+  count: 1
+
+tracing:                       # Sionna RT
+  mode: pairs                  # pairs: the pairs of cells the trajectories visit (collect first); full: every pair
+  frequency: 2.4e9
+  max_depth: 5                 # reflections per path
+  scene: {}                    # SceneConfig fields, e.g. {materials: {inner_wall: brick}}
+  solver: {}                   # trace_paths / PathSolver options, e.g. {batch: 8, samples_per_src: 4000000}
+  overwrite: false             # full: trace again the layouts already traced (pairs are only ever added)
+
+rollouts:                      # the movement in the data should be the movement at deployment
+  episodes: 5                  # per layout, each from random starts and goal
+  max_steps: ${env.max_steps}
+  policy: {random: 0.2, epsilon_expert: 0.5, waypoint: 0.3}   # stable-marl's MixedPolicy: an episode's behaviour
+  epsilon: 0.3                 # random actions of epsilon_expert
+  seed: 0
+  overwrite: false
+
+link:
+  snr_target_db: 10.0          # Γ
+  noise_dbm: -94.0             # σ²
+  max_power_dbm: 20.0          # ρ_max
+  history: 4                   # past gains the transmitter knows (L)
+  fading: null                 # null, or rayleigh on top of the traced channel
+  fading_correlation: 0.95     # of the fading while both agents stand still
+  symmetric: true              # average the two traced directions of each pair (the channel is reciprocal)
+  seed: 0
+
+predictor:
+  quantile: 0.05               # the quantile of the gain (dB) predicted; null: the mean
+  max_iter: 400
+  learning_rate: 0.05
+
+calibration:
+  target: 0.95                 # 1 - ε: share of the servable transmissions reaching Γ
+  slack: 0.005                 # calibrate for target + slack (the choice lands within about that on new layouts)
+  taus_db: [0.0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, .inf]   # withhold when ρ̂ > τ ρ_max; .inf: never
+
+evaluation:                    # on the test layouts (c3jepa_wm.comm.evaluation)
+  targets: [0.9, 0.95, 0.99]   # operating points: κ and τ chosen on the calibration layouts for each
+  baselines: true              # C3-WM's predictor (|h|², dB), a history-only quantile model (perfect CSI always)
+  snr_targets_db: [4, 7, 10, 13, 16]   # also at these Γ: same predictors, κ and τ chosen again for each ([] or null: skip)
+  message_bits: 392            # per message: 49 tokens of 8 bits, uncoded BPSK
+  bits_per_token: 8
+  network: true                # the saved power control through a comm-core network on the test trajectories
+  network_layouts: 10          # the first test layouts it runs on (null: all)

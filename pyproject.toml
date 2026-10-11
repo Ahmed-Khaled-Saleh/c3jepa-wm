@@ -17,6 +17,14 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+comm = [                      # c3jepa_wm.comm (the learned power control) and mains/comm_power.py; tracing also needs sionna
+    "stable-marl[comm] @ git+https://github.com/Ahmed-Khaled-Saleh/stable-marl.git",
+    "scikit-learn",
+    "hydra-core",
+    "loguru",
+]
+
 [project.urls]
 Repository = "https://github.com/Ahmed-Khaled-Saleh/c3jepa-wm"
 Documentation = "https://Ahmed-Khaled-Saleh.github.io/c3jepa-wm/"
