@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['COLLECTION_SEED', 'MultiAgentGoalEvaluator']
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #ba41500d
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #44228dee
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -23,7 +23,7 @@ from ..utils import channel, compute_power_schedule, apply_channel
 from ..utils.env_utils import MultiAgentEnvPool, set_env_state
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #af033adb
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #6a168ed9
 class MultiAgentGoalEvaluator:
     """
     Dataset-driven evaluation of the JEPA planner for a 2-agent communicative
@@ -95,7 +95,7 @@ class MultiAgentGoalEvaluator:
         }
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #fca2e23a
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #1525679f
 @patch
 @torch.no_grad()
 def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_t0, no_comm=False):
@@ -124,7 +124,7 @@ def _encode_message(self: MultiAgentGoalEvaluator, partner_pixels_vqvae_t0, csi_
     return indices.unsqueeze(1)  # (B, 1, 49)
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #230488e0
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #2f61402c
 @patch
 def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent, partner):
     ai = self.agents.index(agent)
@@ -145,7 +145,7 @@ def _build_agent_info_batch(self: MultiAgentGoalEvaluator, episodes: dict, agent
         "csi": csi_t0,
     }
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #ec003e80
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #5291960e
 COLLECTION_SEED = 0   # <-- the seed your data-collection script used at env.reset()
 
 class _FixedGoalRNG:
@@ -155,7 +155,7 @@ class _FixedGoalRNG:
     def integers(self, low, high):
         return self._vals.pop(0)
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #3b56bc84
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #7bb8dd0b
 @patch
 @torch.no_grad()
 def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
@@ -293,7 +293,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
 
     return results
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #78b19d7f
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #7c325b7f
 @patch
 @torch.no_grad()
 def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[[], Any],
@@ -463,7 +463,7 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
     return curves
 
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #c5da0931
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #ee2c1170
 @patch
 @torch.no_grad()
 def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
@@ -537,7 +537,7 @@ def oracle_rank_test(self: MultiAgentGoalEvaluator, num_episodes=8, horizon=15,
               f"top-10% hits {(r < num_random * 0.10).mean():.0%}, ranks={r.tolist()}")
     return ranks
 
-# %% ../../nbs/07d_evaluators.env_eval.ipynb #4c950ce3
+# %% ../../nbs/07d_evaluators.env_eval.ipynb #01507fbb
 @patch
 @torch.no_grad()
 def basin_sweep(self: MultiAgentGoalEvaluator, ks=(5, 10, 15, 20, 30),
