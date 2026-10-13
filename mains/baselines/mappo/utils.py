@@ -8,8 +8,8 @@ import torch.nn as nn
 from omegaconf import OmegaConf
 from torchrl.envs import RewardSum, TransformedEnv
 import gymnasium as gym
-import multigrid.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
-from multigrid.wrappers.external import TorchRLPettingZooWrapper
+import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+from stable_marl.wrappers.external import TorchRLPettingZooWrapper
 from torchrl.envs.libs import pettingzoo as torchrl_pettingzoo
 
 
@@ -24,7 +24,7 @@ GROUP = "agent"
 
 def _keys(group: str = GROUP):
     return {
-        "obs": (group, "observation", "pov"),
+        "obs": (group, "observation", "pixels"),
         "action": (group, "action"),
         "reward": (group, "reward"),
         "done": (group, "done"),
@@ -99,8 +99,8 @@ def make_torchrl_env_fn(env_cfg, fixed_seed: int | None = None):
     triggers, regardless of caller, and override the seed unconditionally.
     """
     import gymnasium as gym
-    import multigrid.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
-    from multigrid.wrappers.external import TorchRLPettingZooWrapper
+    import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+    from stable_marl.wrappers.external import TorchRLPettingZooWrapper
     from torchrl.envs.libs import pettingzoo as torchrl_pettingzoo
 
     def _make():

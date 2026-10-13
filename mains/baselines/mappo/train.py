@@ -34,7 +34,7 @@ bottom of this file FIRST and confirm/adjust the `GROUP`/`*_KEY` constants
 below before trusting anything else in this file:
 
   GROUP        = "agent"                      -- group_map key; verify via env.group_map
-  OBS_KEY      = (GROUP, "observation", "pov") -- gen_obs()'s RGB key, nested one level
+  OBS_KEY      = (GROUP, "observation", "pixels") -- gen_obs()'s RGB key, nested one level
                                                    under "observation" because FindGoalEnv's
                                                    per-agent obs space is a gym.spaces.Dict
   ACTION_KEY   = (GROUP, "action")

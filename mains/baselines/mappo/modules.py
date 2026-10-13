@@ -103,7 +103,7 @@ GROUP = "agent"
 
 def _keys(group: str = GROUP):
     return {
-        "obs": (group, "observation", "pov"),
+        "obs": (group, "observation", "pixels"),
         "action": (group, "action"),
         "reward": (group, "reward"),
         "done": (group, "done"),

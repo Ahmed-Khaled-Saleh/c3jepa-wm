@@ -1,26 +1,32 @@
 # configs/comm/config.yaml: the data, training and calibration of the learned power control
 # (c3jepa_wm.comm.channel_data, c3jepa_wm.comm.power_control), run by mains/comm_power.py.
+#   python comm_power.py                                               # every stage (jobs/comm/comm_power.sh)
 #   python comm_power.py stage=collect
 #   python comm_power.py stage=trace shard.index=0 shard.count=10      # one of 10 tracing jobs
 #   python comm_power.py stage=train link.fading=rayleigh calibration.target=0.99
-#   python comm_power.py env.num_obstacles=0 env.size=9 data_dir=./comm_data_9x9
+#   python comm_power.py stage=evaluate monte_carlo.runs=20
+#   python comm_power.py env.variations=[] data_dir=./comm_data_fixed  # the layouts with FindGoal's fixed numbers of walls
 defaults:
   - env: findgoal
   - _self_
 
+env:                           # configs/comm/env/findgoal.yaml, with:
+  variations: [obstacles.number, clutter.number]   # each layout's numbers of wall blocks (0-12) and single walls (0-20), drawn from its seed
+
 stage: all                     # collect | trace | train | evaluate | all (in this order)
-data_dir: ./comm_data          # trajectories/, layouts/ (pairs_<seed>.npz or layout_<seed>.npz), power_control.pkl, results.json, evaluation(_snr).png
+data_dir: ./comm_data          # trajectories/, layouts/ (pairs_<seed>.npz or layout_<seed>.npz), power_control.pkl, results.json, *.png
 
 layouts:                       # reset seeds [start, stop): train the predictor / choose κ and τ / judge
   train: [0, 200]
   calibration: [200, 230]
   test: [230, 260]
 
-shard:                         # trace and collect only every count-th layout from index (e.g. SLURM arrays)
+shard:                         # collect and trace only every count-th layout from index (SLURM arrays); train and evaluate: count 1
   index: 0
   count: 1
 
 tracing:                       # Sionna RT
+  device: cuda                 # cuda (fails if no GPU is visible: no silent CPU fallback) | cpu
   mode: pairs                  # pairs: the pairs of cells the trajectories visit (collect first); full: every pair
   frequency: 2.4e9
   max_depth: 5                 # reflections per path
@@ -29,7 +35,7 @@ tracing:                       # Sionna RT
   overwrite: false             # full: trace again the layouts already traced (pairs are only ever added)
 
 rollouts:                      # the movement in the data should be the movement at deployment
-  episodes: 5                  # per layout, each from random starts and goal
+  episodes: 5                  # per layout, each from its own goal and starts (FindGoal's spawn rule)
   max_steps: ${env.max_steps}
   policy: {random: 0.2, epsilon_expert: 0.5, waypoint: 0.3}   # stable-marl's MixedPolicy: an episode's behaviour
   epsilon: 0.3                 # random actions of epsilon_expert
@@ -44,7 +50,7 @@ link:
   fading: null                 # null, or rayleigh on top of the traced channel
   fading_correlation: 0.95     # of the fading while both agents stand still
   symmetric: true              # average the two traced directions of each pair (the channel is reciprocal)
-  seed: 0
+  seed: 0                      # the fading's draws and the network's payloads (run r of the Monte Carlo: seed + r)
 
 predictor:
   quantile: 0.05               # the quantile of the gain (dB) predicted; null: the mean
@@ -52,15 +58,35 @@ predictor:
   learning_rate: 0.05
 
 calibration:
-  target: 0.95                 # 1 - ε: share of the servable transmissions reaching Γ
+  target: 0.95                 # 1 - ε of the saved power control: share of the servable transmissions reaching Γ
   slack: 0.005                 # calibrate for target + slack (the choice lands within about that on new layouts)
   taus_db: [0.0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, .inf]   # withhold when ρ̂ > τ ρ_max; .inf: never
 
 evaluation:                    # on the test layouts (c3jepa_wm.comm.evaluation)
   targets: [0.9, 0.95, 0.99]   # operating points: κ and τ chosen on the calibration layouts for each
-  baselines: true              # C3-WM's predictor (|h|², dB), a history-only quantile model (perfect CSI always)
+  baselines: true              # C3-WM's predictor (|h|², dB), history quantile, geometry + history mean (perfect CSI always)
   snr_targets_db: [4, 7, 10, 13, 16]   # also at these Γ: same predictors, κ and τ chosen again for each ([] or null: skip)
   message_bits: 392            # per message: 49 tokens of 8 bits, uncoded BPSK
   bits_per_token: 8
-  network: true                # the saved power control through a comm-core network on the test trajectories
+  network: true                # every method as one block of C3-WM's link (comm-core blocks), on the test trajectories
+  network_targets: [0.95, 0.99]   # the κ and τ chosen for these targets (each one of `targets`)
   network_layouts: 10          # the first test layouts it runs on (null: all)
+
+monte_carlo:                   # fitting + calibration + evaluation again on new splits of the traced layouts (nothing traced again)
+  runs: 10                     # run 0: the split in `layouts` (the saved power control); runs 1..: new splits of the same layouts
+  resplit: true                # each run draws its train / calibration / test layouts from all of them, of the sizes in `layouts`
+  network: false               # the network comparison in runs 1.. too (slow; run 0 has it if evaluation.network)
+  snr_sweep: false             # the Γ sweep in runs 1.. too
+  seed: 0                      # of the splits
+
+wandb:
+  enabled: true
+  project: c3jepa-comm-power
+  name: null                   # null: <stage>-<SLURM job id, or local>
+  mode: online                 # online | offline (then: wandb sync <dir>) | disabled
+  dir: ${data_dir}             # where wandb keeps its files
+  tags: []
+
+hydra:
+  run:
+    dir: ${data_dir}/hydra/${now:%Y-%m-%d_%H-%M-%S}

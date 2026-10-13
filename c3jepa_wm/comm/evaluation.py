@@ -14,29 +14,41 @@ from pathlib import Path
 import numpy as np
 
 from .channel_data import ChannelTable, db, episode_fading, table_path
-from .power_control import Budget, LearnedChannelInversion, TAUS_DB, calibrate, evaluate, fit_predictor, outcome, predict_gain
+from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link, calibrate, evaluate, fit_predictor,
+                                          outcome, predict_gain)
 
 # %% auto #0
-__all__ = ['past_gains', 'baselines', 'prediction_errors', 'operating_points', 'frontier', 'transmissions', 'received',
-           'TableFading', 'simulate_network', 'estimates', 'snr_sweep', 'evaluate_power_control', 'summary',
-           'plot_frontiers', 'snr_summary', 'plot_snr']
+__all__ = ['LEARNED', 'past_gains', 'fit_baselines', 'baselines', 'prediction_errors', 'operating_points', 'frontier',
+           'layout_spread', 'layout_summary', 'plot_layout_spread', 'transmissions', 'received', 'TableFading',
+           'network_methods', 'network_metrics', 'run_network', 'analysis', 'compare_network', 'network_summary',
+           'estimates', 'snr_sweep', 'evaluate_power_control', 'summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
+LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
+
 def past_gains(data: dict, history: int) -> np.ndarray:
     "The past gains |h|² of each sample (most recent first), from its features."
     return 10 ** (data['X'][:, 3:3 + history] / 10)
 
-def baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400) -> dict:
-    "name -> predict(dataset) -> ĝ: C3-WM's predictor (in |h|², and in dB), a history-only quantile model, and perfect CSI; fit on `train`."
+def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400) -> dict:
+    """The baselines' models, fit on `train`: C3-WM's `Ψ` (linear in |h|², eq. 24: `psi`), the same fit in dB (`psi_db`),
+    a quantile model of the history alone, the past gains and the moves (`history_model`), and the learned model's
+    features (geometry + history) fit for the mean gain in dB (`mean_model`)."""
     from comm_core import fit_gain_predictor
     sequences = [np.r_[p[::-1], g] for p, g in zip(past_gains(train, history), train['gain'])]
-    psi, psi_db = fit_gain_predictor(sequences, history=history), fit_gain_predictor(sequences, history=history, domain='db')
-    hist = lambda d: d['X'][:, 3:]                                         # past gains (dB) and moves, no geometry
-    history_only = fit_predictor(hist(train), train['gain'], quantile, max_iter)
+    return dict(psi=fit_gain_predictor(sequences, history=history),
+                psi_db=fit_gain_predictor(sequences, history=history, domain='db'),
+                history_model=fit_predictor(train['X'][:, 3:], train['gain'], quantile, max_iter),
+                mean_model=fit_predictor(train['X'], train['gain'], None, max_iter))
+
+def baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, fitted: dict | None = None) -> dict:
+    "name -> predict(dataset) -> ĝ: C3-WM's predictor (in |h|², and in dB), a history-only quantile model, the geometry + history mean, and perfect CSI; fit on `train` (or `fitted`)."
+    f = fitted if fitted is not None else fit_baselines(train, history, quantile, max_iter)
     return {
-        "C3-WM's (linear in |h|²)": lambda d: np.array([max(psi(p), 0.0) for p in past_gains(d, history)]),
-        "C3-WM's, in dB": lambda d: np.array([psi_db(p) for p in past_gains(d, history)]),
-        'history quantile': lambda d: 10 ** (history_only.predict(hist(d)) / 10),
+        "C3-WM's (linear in |h|²)": lambda d: np.array([max(f['psi'](p), 0.0) for p in past_gains(d, history)]),
+        "C3-WM's, in dB": lambda d: np.array([f['psi_db'](p) for p in past_gains(d, history)]),
+        'history quantile': lambda d: 10 ** (f['history_model'].predict(d['X'][:, 3:]) / 10),
+        'geometry + history mean': lambda d: predict_gain(f['mean_model'], d['X_possible'], d['possible_mask']),
         'perfect CSI': lambda d: d['gain'].copy(),
     }
 
@@ -61,6 +73,68 @@ def frontier(estimate: np.ndarray, gain: np.ndarray, g_min: float, taus_db=(0.0,
     points = np.concatenate([np.c_[o['power'], o['reliability']] for o in (outcome(estimate, gain, g_min, t) for t in taus_db)])
     points = points[np.argsort(points[:, 0])]
     return points[:, 0], np.maximum.accumulate(points[:, 1])
+
+# %% ../../nbs/09c_comm.evaluation.ipynb #b8d4f0c3
+def layout_spread(estimate, gain, layout, g_min: float, margin_db: float, tau_db: float, target: float | None = None,
+                  min_servable: int = 20) -> dict:
+    """The reliability in each layout (`per_layout`: layout -> share of its servable transmissions reaching Γ, `servable`:
+    their numbers) at one margin and threshold, and its spread over the layouts with at least `min_servable` (mean, std,
+    min, 10th percentile, median; with `target`, the share of layouts below it, and the worst shortfall)."""
+    layout = np.asarray(layout)
+    per, count = {}, {}
+    for k in np.unique(layout):
+        on = layout == k
+        n = int((gain[on] >= g_min).sum())
+        if n:
+            per[int(k)] = float(outcome(estimate[on], gain[on], g_min, tau_db, [margin_db])['reliability'][0])
+            count[int(k)] = n
+    r = np.array([per[k] for k in per if count[k] >= min_servable])
+    out = dict(per_layout=per, servable=count, layouts=len(r))
+    if len(r):
+        out.update(mean=float(r.mean()), std=float(r.std()), min=float(r.min()), p10=float(np.percentile(r, 10)),
+                   median=float(np.median(r)))
+        if target is not None:
+            out.update(below=float((r < target).mean()), shortfall=float(max(target - r.min(), 0.0)))
+    return out
+
+def layout_summary(results: dict) -> str:
+    "A text table of `evaluate_power_control`'s `layouts`: per predictor and target, the spread of the per-layout reliability."
+    names = [n for n, r in results['predictors'].items() if 'layouts' in r]
+    targets = list(results['predictors'][names[0]]['layouts'])
+    w = max(map(len, names)) + 2
+    lines = [f"reliability per test layout, κ and τ chosen on the calibration layouts "
+             f"({results['predictors'][names[0]]['layouts'][targets[0]]['layouts']} layouts)",
+             f"{'':{w}s}" + ''.join(f"{f'{100 * t:g}%: pooled / mean ± std / p10 / min / below':>50s}" for t in targets)]
+    for name in names:
+        row = f"{name:{w}s}"
+        for t in targets:
+            s, pooled = results['predictors'][name]['layouts'][t], results['predictors'][name]['targets'][t]['reliability']
+            row += (f"{100 * pooled:13.1f}% {100 * s['mean']:6.1f} ± {100 * s['std']:4.1f} {100 * s['p10']:6.1f} "
+                    f"{100 * s['min']:6.1f} {100 * s['below']:6.0f}%  ")
+        lines.append(row)
+    lines.append('below: the share of the test layouts under the target')
+    return '\n'.join(lines)
+
+def plot_layout_spread(results: dict, target: float, path=None, ax=None):
+    "Each predictor's reliability per test layout (a dot each), at the κ and τ chosen for `target`, against the target."
+    import matplotlib.pyplot as plt
+    names = [n for n, r in results['predictors'].items() if 'layouts' in r and n != 'perfect CSI']
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(1.6 * len(names) + 2, 4))
+    rng = np.random.default_rng(0)
+    for i, name in enumerate(names):
+        s = results['predictors'][name]['layouts'][target]
+        r = 100 * np.array([s['per_layout'][k] for k in s['per_layout'] if s['servable'][k] >= 1])
+        ax.plot(i + rng.uniform(-0.15, 0.15, len(r)), r, 'o', ms=5, alpha=0.7, color='#1f77b4' if name == LEARNED else '#7f7f7f')
+        ax.plot([i - 0.3, i + 0.3], [100 * results['predictors'][name]['targets'][target]['reliability']] * 2, 'k-', lw=2)
+    ax.axhline(100 * target, color='#d62728', lw=1, ls='--', label=f'target {100 * target:g}%')
+    ax.set_xticks(range(len(names)), [n.replace(' (learned)', '\n(learned)').replace(', ', ',\n') for n in names], fontsize=8)
+    ax.set(ylabel='servable transmissions reaching Γ (%)', title=f'Per test layout (dots) and pooled (bars), κ and τ for {100 * target:g}%')
+    ax.spines[['top', 'right']].set_visible(False)
+    ax.legend(frameon=False, fontsize=8)
+    if path is not None:
+        ax.figure.savefig(path, dpi=120, bbox_inches='tight')
+    return ax
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #262808f0
 def transmissions(estimate: np.ndarray, g_min: float, margin_db: float, tau_db: float) -> tuple:
@@ -102,7 +176,56 @@ class TableFading(Fading):
         return complex(math.sqrt(self.table.gain(a, b) * fade))
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #24d7391e
-def simulate_network(
+def network_methods(
+    saved: dict, # `load_power_control`'s result
+    fitted: dict, # `fit_baselines`' result
+    comparison: dict | None = None, # `evaluate_power_control`'s result: the κ and τ of each predictor (None: the saved one's only)
+    target: float = 0.99, # The target whose κ and τ are used (one of `comparison`'s)
+) -> dict:
+    """name -> the method: `make(walls, positions, headings)` -> its power control, its `margin_db`, `tau_db`, `crc`, and
+    the `predictor` (a name of `estimates`') the analysis computes it with."""
+    from comm_core import ChannelInversion, PredictedChannelInversion
+    b, L = saved['budget'], saved['history']
+    snr, rho = b.snr_target_db, b.max_power_w
+    def predicted(psi, margin):
+        return lambda walls, positions, headings: PredictedChannelInversion(psi, L, snr, fallback_power=rho, margin_db=margin)
+    def learned(model, margin, geometry=True):
+        return lambda walls, positions, headings: LearnedChannelInversion(model, walls, positions, headings, L, snr, margin,
+                                                                          rho, geometry)
+    makers = {LEARNED: lambda m: learned(saved['model'], m),
+              "C3-WM's (linear in |h|²)": lambda m: predicted(fitted['psi'], m),
+              "C3-WM's, in dB": lambda m: predicted(fitted['psi_db'], m),
+              'history quantile': lambda m: learned(fitted['history_model'], m, geometry=False),
+              'geometry + history mean': lambda m: learned(fitted['mean_model'], m)}
+    method = lambda make, margin, tau, predictor, crc=False: dict(make=make, margin_db=float(margin), tau_db=float(tau),
+                                                                  crc=crc, predictor=predictor)
+    out = {'perfect CSI': method(lambda walls, positions, headings: ChannelInversion(snr), 0.0, 0.0, 'perfect CSI'),
+           'C3-WM as written (Ψ, κ = 0, δ)': method(predicted(fitted['psi'], 0.0), 0.0, 0.0, "C3-WM's (linear in |h|²)")}
+    points = ({name: r['targets'][target] for name, r in comparison['predictors'].items()} if comparison is not None
+              else {LEARNED: saved['calibration']})
+    for name, make in makers.items():
+        if name in points:
+            p = points[name]
+            out[f'{name}, κ, τ'] = method(make(p['margin_db']), p['margin_db'], p['tau_db'], name)
+    p = points[LEARNED]
+    out[f'{LEARNED}, κ, τ, CRC'] = method(makers[LEARNED](p['margin_db']), p['margin_db'], p['tau_db'], LEARNED, crc=True)
+    return out
+
+def network_metrics(rows: list, budget: Budget, tokens: int, cost: list) -> dict:
+    "The metrics of a network run from its results' rows: (gain, power, sent, arrived, wrong tokens)."
+    g, p, sent, ok = (np.array([r[k] for r in rows], float if k < 2 else bool) for k in range(4))
+    wrong = np.array([r[4] if r[4] is not None else 0 for r in rows])
+    servable, snr = g >= budget.g_min, p * g / budget.noise_w
+    gamma = 10 ** (budget.snr_target_db / 10)
+    perfect = np.where(servable, gamma * budget.noise_w / g, 0.0).mean()
+    return dict(reached=float((sent & (snr >= gamma * (1 - 1e-9)))[servable].mean()), power=float(p.mean() / perfect),
+                withheld=float(1 - sent.mean()), intact=float((ok & (wrong == 0))[servable].mean()),
+                wrong=float((wrong[ok] / tokens).mean()) if ok.any() else 0.0,
+                garbled=float((ok & (wrong > 0))[~servable].mean()) if (~servable).any() else 0.0,
+                cost=float(np.mean(cost)), transmissions=len(rows))
+
+def run_network(
+    method: dict, # One of `network_methods`'
     saved: dict, # `load_power_control`'s result
     layout_dir, # The layouts' channels (`table_path`)
     trajectory_dir, # The `trajectories_<seed>.npz`
@@ -110,65 +233,104 @@ def simulate_network(
     fading: str | None = None, # As in the data: None, or 'rayleigh'
     fading_correlation: float = 0.95,
     symmetric: bool = True, # Full tables: average the two directions
-    message_bits: int = 392, # Per message (uncoded BPSK)
+    message_bits: int = 392, # Per message
     bits_per_token: int = 8, # Per token: a codebook of 2**bits_per_token
     seed: int = 0, # As `build_dataset`'s (the fading's draws)
 ) -> dict:
-    """`LearnedChannelInversion` through a comm-core network on the trajectories of `seeds` (steps after each episode's
-    first `history`, both agents on the grid): the share of the servable transmissions reaching Γ, the power relative to
-    perfect CSI's, the share withheld, the share of the servable messages arriving without an error, and the share of
-    wrong tokens in the servable messages sent."""
-    from comm_core import AnalyticalBackend, FullMeshTopology, IdealProtocol, IndexCodec, LinkLevelChannel, Message, Network, Node
+    "`network_metrics` of one method through C3-WM's link as blocks, on the trajectories of `seeds` (after each episode's first `history` steps)."
+    from comm_core import FullMeshTopology, IdealProtocol, Message, Network, Node, PipelineBackend
     budget, history = saved['budget'], saved['history']
-    snr_target = 10 ** (budget.snr_target_db / 10)
-    rng = np.random.default_rng([seed, 1])                       # the bits and the payloads
+    rng = np.random.default_rng([seed, 1])                       # the payloads and the bits: the same for every method
     tokens = message_bits // bits_per_token
-    reached, power, perfect, withheld, clean, wrong = [], [], [], [], [], []
+    rows, cost = [], []
     for layout in seeds:
         table = ChannelTable(table_path(layout_dir, layout), symmetric=symmetric)
         z = np.load(Path(trajectory_dir) / f'trajectories_{layout}.npz')
         agents = [f'agent_{i}' for i in range(z['cells'].shape[2])]
-        channel_fading = TableFading(table)
+        channel = TableFading(table)
         fading_rng = np.random.default_rng([seed, int(layout)])        # as build_dataset's
         heads = {}
-        control = LearnedChannelInversion.from_saved(saved, table.walls, lambda: channel_fading.node_positions, lambda: heads)
-        channel = LinkLevelChannel(codec=IndexCodec(2 ** bits_per_token), fading=channel_fading, power_control=control,
-                                   noise_power=budget.noise_w, seed=int(rng.integers(2 ** 31)))
-        net = Network([Node(a) for a in agents], FullMeshTopology(agents), IdealProtocol(), AnalyticalBackend(channel))
-        for episode, (cells, dirs) in enumerate(zip(z['cells'], z['dirs'])):
+        control = method['make'](table.walls, lambda: channel.node_positions, lambda: heads)
+        backend = PipelineBackend(c3wm_link(channel, control, budget.max_power_w, method['tau_db'], bits_per_token, method['crc']),
+                                  noise_power=budget.noise_w)
+        net = Network([Node(a) for a in agents], FullMeshTopology(agents), IdealProtocol(), backend)
+        for cells, dirs in zip(z['cells'], z['dirs']):
             net.reset(seed=int(rng.integers(2 ** 31)))
-            channel_fading.node_positions.clear()
+            channel.node_positions.clear()
             fades = episode_fading(cells, fading_rng, fading_correlation) if fading == 'rayleigh' else {}
             for t in range(len(cells)):
-                if (cells[t, :, 0] < 0).any():                     # an agent left the grid, or the episode ended
+                if (cells[t, :, 0] < 0).any():                     # an agent reached the goal, or the episode ended
                     break
-                channel.set_positions({a: tuple(int(v) for v in c) for a, c in zip(agents, cells[t])})
-                channel_fading.fades = {(agents[i], agents[j]): f[t] for (i, j), f in fades.items()}
+                backend.set_positions({a: tuple(int(v) for v in c) for a, c in zip(agents, cells[t])})
+                channel.fades = {(agents[i], agents[j]): f[t] for (i, j), f in fades.items()}
                 heads.update({a: int(d) for a, d in zip(agents, dirs[t])})
-                payloads = {}
                 for a in agents:
                     for b in agents:
                         if a != b:
-                            payloads[a, b] = rng.integers(2 ** bits_per_token, size=tokens)
-                            net.send(Message(a, b, payload=payloads[a, b]))
+                            net.send(Message(a, b, payload=rng.integers(2 ** bits_per_token, size=tokens)))
                 for r in net.step():
-                    if t < max(history, 2):
-                        continue
-                    g = 10 ** (r.metadata['channel_gain_db'] / 10)
-                    p = r.metadata['tx_power'] / (snr_target * budget.noise_w)       # in units of Γσ², as the analysis
-                    servable, sent = g >= budget.g_min, not r.metadata.get('outage', False)
-                    power.append(p)
-                    perfect.append(1 / g if servable else 0.0)
-                    withheld.append(not sent)
-                    if servable:
-                        reached.append(sent and p * g >= 1 - 1e-9)
-                        clean.append(sent and r.metadata.get('bit_errors', 1) == 0)
-                        if sent:
-                            sent_tokens = payloads[r.transmission.sender, r.transmission.receiver]
-                            wrong.append(float(np.mean(np.asarray(r.payload) != sent_tokens)))
-    return dict(reliability=float(np.mean(reached)), power=float(np.sum(power) / np.sum(perfect)), withheld=float(np.mean(withheld)),
-                error_free=float(np.mean(clean)), wrong_tokens=float(np.mean(wrong)) if wrong else float('nan'),
-                transmissions=len(power))
+                    if t >= max(history, 2):
+                        rows.append((10 ** (r.metadata['channel_gain_db'] / 10), r.metadata['tx_power'],
+                                     not r.metadata.get('outage', False), r.success, r.metadata.get('wrong_tokens')))
+            cost.append(net.metrics.summary().bits_sent / 8 / 1000)
+    return network_metrics(rows, budget, tokens, cost)
+
+def analysis(estimate, gain, budget: Budget, margin_db: float, tau_db: float, crc: bool = False, message_bits: int = 392) -> dict:
+    "What the analysis expects of a method on these transmissions: reached, power, withheld, intact, garbled (BPSK's bit errors)."
+    r = evaluate(estimate, gain, budget.g_min, margin_db, tau_db)
+    power, sent = transmissions(estimate, budget.g_min, margin_db, tau_db)
+    snr = 10 ** (budget.snr_target_db / 10) * power * gain
+    clean = (1 - 0.5 * np.vectorize(math.erfc)(np.sqrt(snr))) ** message_bits    # P(no bit wrong)
+    servable = gain >= budget.g_min
+    garbled = 0.0 if crc or not (~servable).any() else float(np.where(sent, 1 - clean, 0.0)[~servable].mean())
+    return dict(reached=r['reliability'], power=r['power'], withheld=r['withheld'],
+                intact=float(np.where(sent, clean, 0.0)[servable].mean()), garbled=garbled)
+
+def compare_network(
+    saved: dict, # `load_power_control`'s result
+    data: dict, # {'train': ..., 'calibration': ..., 'test': ...}: `build_dataset`'s
+    layout_dir, # The layouts' channels (`table_path`)
+    trajectory_dir, # The `trajectories_<seed>.npz`
+    seeds, # The test layouts to run on (some of `data['test']`'s)
+    comparison: dict | None = None, # `evaluate_power_control`'s result (None: the learned predictor and the references only)
+    target: float = 0.99, # The target whose κ and τ are used
+    fitted: dict | None = None, # `fit_baselines`' result (None: fit on `data['train']`)
+    quantile: float = 0.05, # Of the history-only baseline, if fit here
+    max_iter: int = 400, # Of the history-only baseline, if fit here
+    **network, # `run_network`'s options: fading, fading_correlation, symmetric, message_bits, bits_per_token, seed
+) -> dict:
+    "name -> the method's κ, τ, CRC, and its `network` metrics next to its `analysis` on the same layouts."
+    fitted = fitted if fitted is not None else fit_baselines(data['train'], saved['history'], quantile, max_iter)
+    methods = network_methods(saved, fitted, comparison, target)
+    predict = {**baselines(data['train'], saved['history'], fitted=fitted),
+               LEARNED: lambda d: predict_gain(saved['model'], d['X_possible'], d['possible_mask'])}
+    on = np.isin(data['test']['layout'], list(seeds))
+    test = {k: v[on] for k, v in data['test'].items()}
+    out = {}
+    for name, m in methods.items():
+        out[name] = dict(margin_db=m['margin_db'], tau_db=m['tau_db'], crc=m['crc'],
+                         network=run_network(m, saved, layout_dir, trajectory_dir, seeds, **network),
+                         analysis=analysis(predict[m['predictor']](test), test['gain'], saved['budget'], m['margin_db'],
+                                           m['tau_db'], m['crc'], network.get('message_bits', 392)))
+    return out
+
+def network_summary(results: dict) -> str:
+    "A text table of `compare_network`'s result: per method, the network's metrics, and the analysis's below them."
+    label = lambda tau: '∞' if math.isinf(tau) else f'{tau:g}'
+    w = max(map(len, results)) + 2
+    head = (f"{'':{w}s}{'κ (dB)':>7s}{'τ':>5s}{'reached':>9s}{'power':>9s}{'withheld':>9s}{'intact':>8s}{'wrong':>8s}"
+            f"{'garbled':>9s}{'cost':>12s}")
+    lines = [head]
+    for name, r in results.items():
+        n, a = r['network'], r['analysis']
+        lines.append(f"{name:{w}s}{r['margin_db']:7.2f}{label(r['tau_db']):>5s}{100 * n['reached']:8.1f}%{n['power']:8.3g}×"
+                     f"{100 * n['withheld']:8.1f}%{100 * n['intact']:7.1f}%{100 * n['wrong']:7.2f}%{100 * n['garbled']:8.1f}%"
+                     f"{n['cost']:7.2f} KB/ep")
+        lines.append(f"{'  (analysis)':{w + 12}s}{100 * a['reached']:8.1f}%{a['power']:8.3g}×{100 * a['withheld']:8.1f}%"
+                     f"{100 * a['intact']:7.1f}%{'':8s}{100 * a['garbled']:8.1f}%")
+    lines.append("reached: servable transmissions reaching Γ; power: × perfect CSI's; intact: servable ones with every token "
+                 "right; wrong: wrong tokens in what arrived; garbled: unservable ones arriving with wrong tokens")
+    return '\n'.join(lines)
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #33c204cd
 def estimates(
@@ -177,11 +339,12 @@ def estimates(
     compare: bool = True, # Also C3-WM's predictor (in |h|², and in dB) and the history-only quantile model, fit on 'train'
     quantile: float = 0.05, # Of the history-only baseline
     max_iter: int = 400, # Of the history-only baseline
+    fitted: dict | None = None, # `fit_baselines`' result (None: fit here)
 ) -> dict:
     "name -> (ĝ on the calibration layouts, ĝ on the test layouts): the learned predictor, perfect CSI, and the baselines if `compare`."
-    out = {'learned': lambda d: predict_gain(saved['model'], d['X_possible'], d['possible_mask'])}
+    out = {LEARNED: lambda d: predict_gain(saved['model'], d['X_possible'], d['possible_mask'])}
     if compare:
-        out.update(baselines(data['train'], saved['history'], quantile, max_iter))
+        out.update(baselines(data['train'], saved['history'], quantile, max_iter, fitted))
     out['perfect CSI'] = lambda d: d['gain'].copy()
     return {name: (predict(data['calibration']), predict(data['test'])) for name, predict in out.items()}
 
@@ -230,16 +393,21 @@ def evaluate_power_control(
     bits_per_token: int = 8, # Per token
     compare: bool = True, # Also the baselines (perfect CSI always)
     snr_targets_db=(), # Also `snr_sweep` at these Γ (in 'snr')
+    fitted: dict | None = None, # `fit_baselines`' result (None: fit here)
 ) -> dict:
     "Prediction errors, operating points, frontiers and what the agents receive, for the learned predictor and the baselines."
     budget = saved['budget']
-    estimated = estimates(saved, data, compare, quantile, max_iter)
+    estimated = estimates(saved, data, compare, quantile, max_iter, fitted)
     test_gain = data['test']['gain']
     results = {name: dict(prediction=prediction_errors(t, test_gain),
                           targets=_operating(name, (c, data['calibration']['gain']), (t, test_gain), budget, targets,
                                              taus_db, slack, message_bits, bits_per_token),
                           frontier=[a.tolist() for a in frontier(t, test_gain, budget.g_min)])
                for name, (c, t) in estimated.items()}
+    for name, (c, t) in estimated.items():                         # the reliability per test layout, at the same κ and τ
+        results[name]['layouts'] = {target: layout_spread(t, test_gain, data['test']['layout'], budget.g_min, p['margin_db'],
+                                                          p['tau_db'], target)
+                                    for target, p in results[name]['targets'].items()}
     out = dict(servable=float((test_gain >= budget.g_min).mean()), transmissions=len(test_gain), predictors=results)
     if len(snr_targets_db):
         out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token)
@@ -249,12 +417,13 @@ def summary(results: dict) -> str:
     "A text table: per predictor, its prediction errors and, per target, the reliability and power on the test layouts."
     names = list(results['predictors'])
     targets = list(results['predictors'][names[0]]['targets'])
-    head = f"{'':26s}{'bias':>7s}{'spread':>8s}{'cover':>7s}" + ''.join(f'{f"{100 * t:g}%: reached / power / error-free":>36s}' for t in targets)
+    w = max(map(len, names)) + 2
+    head = f"{'':{w}s}{'bias':>7s}{'spread':>8s}{'cover':>7s}" + ''.join(f'{f"{100 * t:g}%: reached / power / error-free":>36s}' for t in targets)
     lines = [f"{results['transmissions']} test transmissions, {100 * results['servable']:.1f}% servable", head]
     for name in names:
         r = results['predictors'][name]
         p = r['prediction']
-        row = f"{name:26s}{p['bias_db']:+6.1f} {p['spread_db']:6.1f} {100 * p['coverage']:6.1f}%"
+        row = f"{name:{w}s}{p['bias_db']:+6.1f} {p['spread_db']:6.1f} {100 * p['coverage']:6.1f}%"
         for t in targets:
             o = r['targets'][t]
             flag = ' ' if o['met_on_calibration'] else '✗'
@@ -272,7 +441,7 @@ def plot_frontiers(results: dict, path=None, ax=None):
         if name == 'perfect CSI':
             continue
         power, reliability = r['frontier']
-        line, = ax.plot(power, 100 * np.asarray(reliability), lw=2.2 if name == 'learned' else 1.3, label=name)
+        line, = ax.plot(power, 100 * np.asarray(reliability), lw=2.2 if name == LEARNED else 1.3, label=name)
         for o in r['targets'].values():
             ax.plot(o['power'], 100 * o['reliability'], 'o', color=line.get_color(), ms=5)
     ax.plot(1, 100, 'k*', ms=12, label='perfect CSI')
@@ -289,11 +458,12 @@ def snr_summary(sweep: dict) -> str:
     "A text table of `snr_sweep`'s result: per Γ and predictor, per target, the reliability, power and error-free share on the test layouts."
     first = next(iter(sweep.values()))
     targets = list(next(iter(first['predictors'].values())))
-    head = f"{'Γ (dB)':>7s}{'g_min':>8s}{'servable':>10s}  {'':26s}" + ''.join(f'{f"{100 * t:g}%: reached / power / error-free":>36s}' for t in targets)
+    w = max(len(n) for r in sweep.values() for n in r['predictors']) + 2
+    head = f"{'Γ (dB)':>7s}{'g_min':>8s}{'servable':>10s}  {'':{w}s}" + ''.join(f'{f"{100 * t:g}%: reached / power / error-free":>36s}' for t in targets)
     lines = [head]
     for snr, r in sweep.items():
         for i, (name, points) in enumerate(r['predictors'].items()):
-            row = (f"{snr:7g}{r['g_min_db']:7.0f} {100 * r['servable']:8.1f}%  " if i == 0 else ' ' * 27) + f"{name:26s}"
+            row = (f"{snr:7g}{r['g_min_db']:7.0f} {100 * r['servable']:8.1f}%  " if i == 0 else ' ' * 27) + f"{name:{w}s}"
             for t in targets:
                 o = points[t]
                 flag = ' ' if o['met_on_calibration'] else '✗'
@@ -312,7 +482,7 @@ def plot_snr(sweep: dict, path=None):
     for row, t in zip(axes, targets):
         for name in names:
             points = [sweep[s]['predictors'][name][t] for s in snrs]
-            style = dict(lw=2.2 if name == 'learned' else 1.3, marker='o', ms=3, label=name,
+            style = dict(lw=2.2 if name == LEARNED else 1.3, marker='o', ms=3, label=name,
                          **(dict(color='k', ls='--') if name == 'perfect CSI' else {}))
             row[0].plot(snrs, [100 * p['reliability'] for p in points], **style)
             row[1].plot(snrs, [p['power'] for p in points], **style)

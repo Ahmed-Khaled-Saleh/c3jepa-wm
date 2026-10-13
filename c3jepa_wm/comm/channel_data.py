@@ -33,12 +33,29 @@ def _plain(cfg) -> dict:
     return dict(cfg)
 
 def make_env(env_cfg):
-    "A stable-marl environment from its config: a mapping with the class as `_target_` (as Hydra's) and its arguments."
+    """A stable-marl environment from its config: a mapping with the class as `_target_` (as Hydra's) and its arguments,
+    and optionally `variations`: the factors of variation every reset draws from its seed (e.g. `['obstacles.number',
+    'clutter.number']`; none: the env's own values)."""
     kwargs = _plain(env_cfg)
     target = kwargs.pop('_target_')
     kwargs.pop('_convert_', None)
+    variations = tuple(kwargs.pop('variations', None) or ())
     module, name = target.rsplit('.', 1)
-    return getattr(importlib.import_module(module), name)(**kwargs)
+    env = getattr(importlib.import_module(module), name)(**kwargs)
+    if variations:
+        known = set(_variation_names(env.unwrapped.variation_space))
+        unknown = [v for v in variations if v not in known]
+        if unknown:
+            raise ValueError(f"unknown variations {unknown}: {sorted(known)}")
+        env.unwrapped.DEFAULT_VARIATIONS = variations        # drawn again at every reset, from its seed
+    return env
+
+def _variation_names(space, prefix='') -> list[str]:
+    "The dotted names of a variation space's factors (e.g. 'obstacles.number')."
+    subspaces = getattr(space, 'spaces', None)
+    if not isinstance(subspaces, dict):
+        return [prefix[:-1]]
+    return [n for k, s in subspaces.items() for n in _variation_names(s, f'{prefix}{k}.')]
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #debdfcfa
 def free_cells(env) -> list[tuple[int, int]]:
@@ -48,7 +65,9 @@ def free_cells(env) -> list[tuple[int, int]]:
 
 def reset_in_layout(env, layout_seed: int, rng: np.random.Generator):
     """Reset `env` to the layout of `layout_seed`, then move the goal and the agents to random free cells (random
-    headings): many episodes in one layout. (A reset seed fixes the goal and the starts as well as the layout.)"""
+    headings): many episodes in one layout. (A reset seed fixes the goal and the starts as well as the layout.) As
+    FindGoal's own spawn rule: the agents on distinct cells at least `goal.min_spawn_distance` steps (Manhattan) from
+    the goal, or as far as the layout allows."""
     from stable_marl.envs.multigrid.core.world_object import Goal
     env.reset(seed=int(layout_seed))
     u = env.unwrapped
@@ -56,12 +75,23 @@ def reset_in_layout(env, layout_seed: int, rng: np.random.Generator):
     if goal is not None:
         u.grid.set(int(goal[0]), int(goal[1]), None)
     cells = free_cells(env)
-    chosen = rng.choice(len(cells), len(u.agents) + (goal is not None), replace=False)
+    starts = cells
     if goal is not None:
-        u.goal_pos = np.asarray(cells[chosen[-1]])
-        u.grid.set(*cells[chosen[-1]], Goal())
-    for agent, k in zip(u.agents, chosen):
-        agent.state.pos = cells[k]
+        g = cells[rng.integers(len(cells))]
+        u.goal_pos = np.asarray(g)
+        u.grid.set(*g, Goal())
+        far = lambda c: abs(c[0] - g[0]) + abs(c[1] - g[1])
+        cells = [c for c in cells if c != g]
+        try:
+            wanted = int(u._variation('goal.min_spawn_distance'))
+        except (AttributeError, KeyError):
+            wanted = 0
+        reach = min(wanted, max(map(far, cells)))
+        starts = [c for c in cells if far(c) >= reach]
+        if len(starts) < len(u.agents):                         # too few far cells: the farthest ones
+            starts = sorted(cells, key=far)[-len(u.agents):]
+    for agent, k in zip(u.agents, rng.choice(len(starts), len(u.agents), replace=False)):
+        agent.state.pos = starts[k]
         agent.state.dir = int(rng.integers(4))
     return env
 

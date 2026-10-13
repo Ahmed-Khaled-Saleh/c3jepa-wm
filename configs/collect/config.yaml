@@ -1,0 +1,33 @@
+# @package _global_
+# configs/collect/config.yaml: the FindGoal dataset, collected with stable-marl's World.collect and MixedPolicy
+# (mains/collect_world.py). Episode k plays in layout layouts[k % L] from its own goal and starts.
+#   python collect_world.py                                        # every stage, workers = SLURM_CPUS_PER_TASK
+#   python collect_world.py stage=collect                          # in each job of a SLURM array (shard: the array)
+#   python collect_world.py stage=merge                            # once, after the array
+#   python collect_world.py episodes_per_layout=2 workers=4 out_dir=./data/findgoal_test
+# Then the channel: python comm_power.py data_dir=<out_dir> stage=trace (it reads <out_dir>/trajectories).
+defaults:
+  - /comm/env@env: findgoal      # the env of configs/comm: the layouts played here are the layouts traced there
+  - _self_
+
+stage: all                       # collect | merge | trajectories | all (in this order)
+out_dir: /scratch/project_2009050/datasets/findgoal_layouts   # parts/part_<first episode>.h5, dataset.h5, trajectories/
+env_id: MultiGrid-FindGoal-15x15-v0   # env._target_'s registered id (World makes its envs by id, with env's other fields)
+
+layouts: [0, 260]                # reset seeds [start, stop), as configs/comm: train 0-200, calibration 200-230, test 230-260
+episodes_per_layout: 40          # 260 x 40 = 10,400 episodes
+
+policy:                          # stable-marl's MixedPolicy: each episode's behaviour drawn with these weights
+  weights: {random: 0.2, epsilon_expert: 0.5, waypoint: 0.3}
+  epsilon: 0.3                   # random actions of epsilon_expert
+  seed: 0
+
+workers: ${oc.decode:${oc.env:SLURM_CPUS_PER_TASK,8}}   # processes collecting at once
+chunk: 25                        # episodes per task: each task writes one part
+num_envs: 1                      # envs per World, stepped one after the other within a worker
+image_size: null                 # resize 'pixels' and 'goal' (null: 224, the agent's 7 x 7 view at 32 pixels per cell)
+overwrite: false                 # collect again the parts already written
+
+shard:                           # this job's share of the episodes (a SLURM array: one job per shard)
+  index: ${oc.decode:${oc.env:SLURM_ARRAY_TASK_ID,0}}
+  count: ${oc.decode:${oc.env:SLURM_ARRAY_TASK_COUNT,1}}

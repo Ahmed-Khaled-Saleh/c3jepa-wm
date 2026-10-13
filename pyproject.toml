@@ -15,15 +15,37 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = []
+dependencies = [
+    # the sibling packages, by name: install them first, editable (comm-core, then stable-marl), and pip keeps them;
+    # without local copies, the `git` extra below takes them from GitHub
+    "comm-core",                  # c3jepa_wm.comm: comm-core's blocks, power controls and trace_paths
+    "stable-marl",                # the environments (MultiGrid FindGoal), World.collect, MixedPolicy, the Sionna RT export
+    "numpy",
+    "torch",                      # the world models (on a cluster: the system's, e.g. CSC's python-pytorch module)
+    "torchvision",
+    "einops",
+    "fastcore",
+    "gymnasium",
+    "h5py",                       # the datasets
+    "pandas",
+    "matplotlib",
+    "gdown",                      # c3jepa_wm.data: downloading the datasets
+    "hydra-core",                 # mains/: the configs
+    "omegaconf",
+    "loguru",
+    "wandb",
+    "python-dotenv",              # mains/: WANDB_API_KEY from .env
+    "scikit-learn",               # c3jepa_wm.comm: the gain predictors
+    "sionna-rt",                  # c3jepa_wm.comm, mains/comm_power.py: the ray tracing (Mitsuba, Dr.Jit)
+]
 
 [project.optional-dependencies]
-comm = [                      # c3jepa_wm.comm (the learned power control) and mains/comm_power.py; tracing also needs sionna
-    "stable-marl[comm] @ git+https://github.com/Ahmed-Khaled-Saleh/stable-marl.git",
-    "scikit-learn",
-    "hydra-core",
-    "loguru",
+git = [                           # the sibling packages from GitHub, when there are no local copies to install
+    "comm-core @ git+https://github.com/Ahmed-Khaled-Saleh/comm-core.git",
+    "stable-marl @ git+https://github.com/Ahmed-Khaled-Saleh/stable-marl.git",
 ]
+baselines = ["pettingzoo", "torchrl", "tensordict", "jax", "chex", "dm-tree"]   # mains/baselines (og-marl and stable-pretraining: from their repositories)
+dev = ["nbdev", "pytest"]
 
 [project.urls]
 Repository = "https://github.com/Ahmed-Khaled-Saleh/c3jepa-wm"

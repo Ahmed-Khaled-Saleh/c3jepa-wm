@@ -165,3 +165,5 @@ checklink/cookies.txt
 
 *.png
 *.pdf
+# collections made by the tests (tests/test_collect_world.py, tests/inspect_collect_world.ipynb)
+tests/output/

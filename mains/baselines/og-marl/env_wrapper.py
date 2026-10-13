@@ -57,7 +57,7 @@ class OGMARLFindGoalWrapper(BaseEnvironment):
         num_actions: NavigationAction has 4 actions (left, right, forward,
             done).
         obs_key: which field of FindGoalEnv.gen_obs()'s per-agent obs dict
-            to expose as the observation -- "pov" (RGB) for the ViT-fronted
+            to expose as the observation -- "pixels" (RGB; "pov" in the old multigrid) for the ViT-fronted
             system.
     """
 
@@ -70,12 +70,12 @@ class OGMARLFindGoalWrapper(BaseEnvironment):
         height: int = 15,
         max_steps: int = 150,
         joint_reward: bool = True,
-        obs_key: str = "pov",
+        obs_key: str = "pixels",
         render_mode: str = "rgb_array",
     ):
         import gymnasium as gym
-        import multigrid.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
-        from multigrid.wrappers.external import PettingZooWrapper
+        import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+        from stable_marl.wrappers.external import PettingZooWrapper
 
         base_gym_env = gym.make(
             'MultiGrid-FindGoal-15x15-v0',

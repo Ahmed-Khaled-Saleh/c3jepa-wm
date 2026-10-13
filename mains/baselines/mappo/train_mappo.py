@@ -1,7 +1,7 @@
 """
 Multi-Agent PPO (MAPPO), adapted from the TorchRL tutorial
 (https://docs.pytorch.org/rl/stable/tutorials/multiagent_ppo.html) for our
-FindGoalEnv (via `multigrid.wrappers.external.TorchRLPettingZooWrapper` ->
+FindGoalEnv (via `stable_marl.wrappers.external.TorchRLPettingZooWrapper` ->
 `torchrl.envs.libs.pettingzoo.PettingZooWrapper`), reusing the same
 ViT-Tiny pixel encoder as `train.py`'s CommNet setup.
 
@@ -26,7 +26,7 @@ What's different from the tutorial, and why:
 
 IMPORTANT -- key-path assumptions, verified against torchrl==0.13.2's
 `PettingZooWrapper` source, but STILL DEPEND on your specific
-`multigrid.wrappers.external.TorchRLPettingZooWrapper` naming agents like
+`stable_marl.wrappers.external.TorchRLPettingZooWrapper` naming agents like
 "agent_0", "agent_1", ... (the convention PettingZoo's default grouping
 splits on to build the group name "agent" -- see `_get_default_group_map`
 in torchrl/envs/libs/pettingzoo.py). Run `debug_env_structure()` at the
@@ -34,7 +34,7 @@ bottom of this file FIRST and confirm/adjust the `GROUP`/`*_KEY` constants
 below before trusting anything else in this file:
 
   GROUP        = "agent"                      -- group_map key; verify via env.group_map
-  OBS_KEY      = (GROUP, "observation", "pov") -- gen_obs()'s RGB key, nested one level
+  OBS_KEY      = (GROUP, "observation", "pixels") -- gen_obs()'s RGB key, nested one level
                                                    under "observation" because FindGoalEnv's
                                                    per-agent obs space is a gym.spaces.Dict
   ACTION_KEY   = (GROUP, "action")
@@ -244,7 +244,7 @@ GROUP = "agent"
 
 def _keys(group: str = GROUP):
     return {
-        "obs": (group, "observation", "pov"),
+        "obs": (group, "observation", "pixels"),
         "action": (group, "action"),
         "reward": (group, "reward"),
         "done": (group, "done"),
@@ -294,8 +294,8 @@ def make_torchrl_env_fn(env_cfg: EnvConfig, fixed_seed: int | None = None):
     triggers, regardless of caller, and override the seed unconditionally.
     """
     import gymnasium as gym
-    import multigrid.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
-    from multigrid.wrappers.external import TorchRLPettingZooWrapper
+    import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+    from stable_marl.wrappers.external import TorchRLPettingZooWrapper
     from torchrl.envs.libs import pettingzoo as torchrl_pettingzoo
 
     def _make():

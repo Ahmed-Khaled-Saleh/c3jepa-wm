@@ -12,7 +12,7 @@ class EnvConfig:
     num_actions: int = 4      # NavigationAction: {left, right, forward, done}
     view_size: int = 7        # agent's egocentric grid window (7x7 cells)
     tile_size: int = 32       # pixels/cell -> 7*32 = 224, matching ViT-Tiny's input res
-    obs_key: str = "pov"      # key holding the RGB frame in each agent's obs dict (FindGoalEnv.gen_obs)
+    obs_key: str = "pixels"      # key holding the RGB frame in each agent's obs dict (FindGoalEnv.gen_obs; "pov" in the old multigrid)
     noop_action: int = 3      # action substituted for agents no longer live in a given env (NavigationAction.done, a genuine no-op)
     num_obstacles: int = 6
     width: int = 15

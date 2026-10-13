@@ -1,6 +1,6 @@
 import gymnasium as gym
-import multigrid.envs
-from multigrid.wrappers.base import GridRecorder
+import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+from stable_marl.wrappers.base import GridRecorder
 import numpy as np
 
 env = gym.make('MultiGrid-FindGoal-15x15-v0', agents=2, render_mode='rgb_array', num_obstacles=6, width=15, height=15)

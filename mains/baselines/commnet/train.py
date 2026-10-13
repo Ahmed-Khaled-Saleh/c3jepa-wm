@@ -85,7 +85,7 @@ class MultiGridPoolAdapter:
             a given env this step (see `MultiAgentEnvPool.step` docstring).
     """
 
-    def __init__(self, pool: MultiAgentEnvPool, obs_key: str = "pov",
+    def __init__(self, pool: MultiAgentEnvPool, obs_key: str = "pixels",
                  noop_action: int = 3):
         self.pool = pool
         self.agents = pool.agents

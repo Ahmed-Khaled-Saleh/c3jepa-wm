@@ -12,8 +12,8 @@ from omegaconf import OmegaConf
 
 
 import gymnasium as gym
-import multigrid.envs
-from multigrid.wrappers.external import PettingZooWrapper
+import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+from stable_marl.wrappers.external import PettingZooWrapper
 
 # --------------------------------------------------------------------------
 # Env construction -- adapt to your actual MultiGrid + PettingZooWrapper.

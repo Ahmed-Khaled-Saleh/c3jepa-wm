@@ -3,7 +3,7 @@ import copy
 import os
 import numpy as np
 import gymnasium as gym
-import multigrid.envs
+import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
 
 
 
@@ -43,7 +43,7 @@ def collect_one_rollout_numpy(args):
 
         for ag in agents:
             agent_data[ag]["image"].append(current_obs[ag]["image"])# list of ndarrays
-            agent_data[ag]["pov"].append(current_obs[ag]["pov"]) # list of ndarrays
+            agent_data[ag]["pov"].append(current_obs[ag]["pixels"]) # list of ndarrays
             agent_data[ag]["pos"].append(env.unwrapped.agents[ag].state.pos) # list of tuples
             agent_data[ag]["dir"].append(obs[ag]["direction"])
 

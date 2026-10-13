@@ -261,7 +261,7 @@ def evaluate_batch_fixed_t0(self: MultiAgentGoalEvaluator, episodes: dict,
                 reached = bool(terminateds[agent][i])
                 truncated = bool(truncateds[agent][i])
 
-                pov = stacked_infos[agent]["pov"][i, 0]
+                pov = stacked_infos[agent]["pixels"][i, 0]
                 frame = (self.data_module.val_receiver_transform(pov)
                          .unsqueeze(0).unsqueeze(0).to(self.device))
                 enc = self.model.encode({"pixels": frame})
@@ -402,7 +402,7 @@ def evaluate_dataset_fixed_t0(self: MultiAgentGoalEvaluator, make_env: Callable[
     pool = MultiAgentEnvPool([make_env for _ in range(n)], agents=self.agents)
 
     # ---- DIAGNOSTIC: wrapper chain + action semantics (one-off) ----
-    from multigrid.core.actions import NavigationAction   # adjust import path if needed
+    from stable_marl.envs.multigrid.core.actions import NavigationAction
     print("Wrapper chain:", pool.envs[0].env)
     print("NavigationAction mapping:",
           [(a.name, int(a)) for a in NavigationAction])

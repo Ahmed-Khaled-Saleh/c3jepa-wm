@@ -4,10 +4,10 @@ from typing import List, Tuple, Dict, Optional
 
 
 import gymnasium as gym
-import multigrid.envs
-from multigrid.envs.findgoal import FindGoalEnv
-from multigrid.core.actions import NavigationAction
-from multigrid.core.grid import Type
+import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
+from stable_marl.envs.multigrid.findgoal import FindGoalEnv
+from stable_marl.envs.multigrid.core.actions import NavigationAction
+from stable_marl.envs.multigrid.core.constants import Type
 
 def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> float:
     """Manhattan distance heuristic."""

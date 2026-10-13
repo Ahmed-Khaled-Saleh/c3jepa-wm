@@ -1,4 +1,4 @@
-"""Channel inversion with a learned prediction of the gain: the predictor, its margin and scheduling threshold chosen for a target reliability, and the power control that uses them (a comm-core `PowerControl`).
+"""Channel inversion with a learned prediction of the gain: the predictor, its margin and scheduling threshold chosen for a target reliability, and C3-WM's link as a pipeline of comm-core blocks with the power control as one of them.
 
 Docs: https://Ahmed-Khaled-Saleh.github.io/c3jepa-wm/comm.power_control.html.md"""
 
@@ -18,8 +18,8 @@ import numpy as np
 from .channel_data import DIRS, db, features
 
 # %% auto #0
-__all__ = ['MARGINS_DB', 'TAUS_DB', 'Budget', 'fit_predictor', 'predict_gain', 'outcome', 'calibrate', 'evaluate',
-           'save_power_control', 'load_power_control', 'LearnedChannelInversion']
+__all__ = ['MARGINS_DB', 'TAUS_DB', 'OOV', 'Budget', 'fit_predictor', 'predict_gain', 'outcome', 'calibrate', 'evaluate',
+           'save_power_control', 'load_power_control', 'LearnedChannelInversion', 'Schedule', 'Tokens', 'c3wm_link']
 
 # %% ../../nbs/09b_comm.power_control.ipynb #46629e8a
 @dataclass
@@ -113,33 +113,37 @@ def load_power_control(path) -> dict:
     return saved
 
 # %% ../../nbs/09b_comm.power_control.ipynb #ae63ef44
-from comm_core import PowerControl
+from comm_core import BPSK, Airtime, BitLevelLink, Block, IndexCodec, PowerControl, SINR
 
 class LearnedChannelInversion(PowerControl):
-    "Channel inversion with a learned gain prediction: the lowest over the receiver's possible cells, with a margin and a scheduling threshold."
+    "Eq. 26 with the gain from `model` (features -> dB): the lowest prediction over the receiver's possible cells."
 
     def __init__(
         self,
-        model, # Predicts the gain (dB) from `features`
+        model, # Predicts the gain (dB) from `features` (or, with `geometry=False`, from the past gains and the moves)
         walls: np.ndarray, # The layout's walls: walls[x, y] = 1 where an agent cannot stand
         positions, # positions() -> {node: (x, y)}, where the nodes are now
         headings, # headings() -> {node: heading}, MultiGrid's 0-3
         history: int = 4, # Past gains the model needs
         target_snr_db: float = 10.0, # Γ
-        max_power: float = math.inf, # ρ_max
         margin_db: float = 0.0, # κ
-        tau_db: float = math.inf, # τ: withhold when ρ̂ > 10^(τ/10) ρ_max
+        fallback_power: float = math.inf, # The power asked for while a link has fewer than `history` past gains (e.g. ρ_max)
+        geometry: bool = True, # False: the history-only model (no receiver cells, no walls)
     ):
         self.model, self.walls, self.positions, self.headings = model, walls, positions, headings
-        self.history, self.target_snr_db, self.max_power, self.margin_db, self.tau_db = history, target_snr_db, max_power, margin_db, tau_db
+        self.history, self.target_snr_db, self.margin_db = history, target_snr_db, margin_db
+        self.fallback_power, self.geometry = fallback_power, geometry
         self.reset()
 
     @classmethod
     def from_saved(cls, saved: dict, walls, positions, headings):
-        "From `load_power_control`'s result, for a layout's `walls`."
+        "From `load_power_control`'s result, for a layout's `walls` (its `τ` is `Schedule`'s: see `c3wm_link`)."
         b, c = saved['budget'], saved['calibration']
-        return cls(saved['model'], walls, positions, headings, saved['history'], b.snr_target_db, b.max_power_w,
-                   c['margin_db'], c['tau_db'])
+        return cls(saved['model'], walls, positions, headings, saved['history'], b.snr_target_db, c['margin_db'],
+                   b.max_power_w)
+
+    def children(self):
+        return []                                                   # the model and the callables hold no blocks
 
     def reset(self, seed=None):
         self._past, self._rounds = {}, []
@@ -154,17 +158,64 @@ class LearnedChannelInversion(PowerControl):
         past = self._past.setdefault((link.sender, link.receiver), [])
         if len(past) < self.history or len(self._rounds) < 3:
             self.predicted = None
-            power, send = self.max_power, True
+            power = self.fallback_power
         else:
             (earlier, _), (before, heads), (now, _) = self._rounds
             tx, rx = now[link.sender], before[link.receiver]
-            d = DIRS[int(heads[link.receiver])]
-            free = lambda c: 0 <= c[0] < self.walls.shape[0] and 0 <= c[1] < self.walls.shape[1] and not self.walls[c]
-            possible = [c for c in (rx, (rx[0] + d[0], rx[1] + d[1])) if free(c) and c != tx] or [rx]
             moved = (tx != before[link.sender], rx != earlier[link.receiver])
-            X = np.array([features(self.walls, tx, c, past[-self.history:][::-1], *moved) for c in possible])
+            if self.geometry:
+                d = DIRS[int(heads[link.receiver])]
+                free = lambda c: 0 <= c[0] < self.walls.shape[0] and 0 <= c[1] < self.walls.shape[1] and not self.walls[c]
+                possible = [c for c in (rx, (rx[0] + d[0], rx[1] + d[1])) if free(c) and c != tx] or [rx]
+                X = np.array([features(self.walls, tx, c, past[-self.history:][::-1], *moved) for c in possible])
+            else:
+                X = np.array([[*db(past[-self.history:][::-1]), float(moved[0]), float(moved[1])]])
             self.predicted = 10 ** (self.model.predict(X).min() / 10)
-            rho = 10 ** ((self.target_snr_db + self.margin_db) / 10) * noise_power / self.predicted
-            power, send = min(rho, self.max_power), rho <= self.max_power * 10 ** (self.tau_db / 10)
+            power = 10 ** ((self.target_snr_db + self.margin_db) / 10) * noise_power / self.predicted
         past.append(float(gain))                                    # fed back after the transmission
-        return power, bool(send)
+        return power, True                                          # whether to send: `Schedule`'s
+
+
+class Schedule(Block):
+    "Eq. 27: send only if the power asked for is within `10^(τ/10) ρ_max`, at no more than `ρ_max`."
+    outputs = ('power', 'active')
+
+    def __init__(
+        self,
+        max_power: float, # ρ_max
+        tau_db: float = 0.0, # τ: 0 is C3-WM's δ, inf never withholds (best effort)
+    ):
+        self.max_power, self.tau_db = max_power, tau_db
+
+    def call(self, power, active):
+        power = np.asarray(power, float)
+        return np.minimum(power, self.max_power), np.asarray(active) & (power <= self.max_power * 10 ** (self.tau_db / 10))
+
+
+OOV = -1                                                            # the out-of-vocabulary token
+
+class Tokens(Block):
+    "What the receiver's world model gets: the tokens detected, or `OOV` in each place when nothing arrived."
+    outputs = ('payload', 'info')
+
+    def call(self, transmission, success, payload, info):
+        tokens, extra = [], []
+        for t, ok, p, i in zip(transmission, success, payload, info):
+            sent = np.asarray(t.message.payload)
+            got = np.asarray(p) if ok else np.full(sent.shape, OOV)
+            tokens.append(got)
+            extra.append({**(i or {}), 'wrong_tokens': int((got != sent).sum()) if ok else None})
+        return tokens, extra
+
+
+def c3wm_link(
+    fading, # The channel: a comm-core `Fading` (it is told where the nodes are: `set_positions`)
+    power_control, # The power: a comm-core `PowerControl` (e.g. `LearnedChannelInversion`)
+    max_power: float, # ρ_max
+    tau_db: float = 0.0, # τ: 0 is C3-WM's δ, inf never withholds (best effort)
+    bits_per_token: int = 8, # log₂ K: a codebook of 2**bits_per_token tokens
+    crc: bool = False, # Drop the messages with bit errors (they arrive as OOV), instead of delivering them
+) -> list:
+    "C3-WM's link as comm-core blocks, for a `PipelineBackend`: fading, power, scheduling, SNR, bits, tokens, airtime."
+    return [fading, power_control, Schedule(max_power, tau_db), SINR(),
+            BitLevelLink(IndexCodec(2 ** bits_per_token), BPSK(), drop_corrupted=crc), Tokens(), Airtime()]

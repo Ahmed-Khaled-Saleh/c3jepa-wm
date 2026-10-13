@@ -6,7 +6,7 @@ import numpy as np
 from collections import defaultdict
 from typing import List, Tuple, Dict, Optional
 import gymnasium as gym
-import multigrid.envs
+import stable_marl.envs  # noqa: F401 -- registers 'MultiGrid-FindGoal-15x15-v0'
 from a_star_policy import astar, path_to_actions
 # ── Policy helpers (reuse your existing A* code) ──────────────────────────────
 
@@ -219,7 +219,7 @@ def collect_one_rollout(args):
 
         for ag in agents:
             agent_data[ag]["img"].append(current_obs[ag]["image"])
-            agent_data[ag]["pov"].append(current_obs[ag]["pov"])
+            agent_data[ag]["pov"].append(current_obs[ag]["pixels"])
             agent_data[ag]["pos"].append(env.unwrapped.agents[ag].state.pos)
             agent_data[ag]["dir"].append(env.unwrapped.agents[ag].state.dir)
             agent_data[ag]["act"].append(actions[ag])
@@ -230,7 +230,7 @@ def collect_one_rollout(args):
         if done or t == max_steps - 1:    
             for ag in agents:    
                 agent_data[ag]["img"].append(obs[ag]["image"])
-                agent_data[ag]["pov"].append(obs[ag]["pov"])
+                agent_data[ag]["pov"].append(obs[ag]["pixels"])
                 agent_data[ag]["pos"].append(env.unwrapped.agents[ag].state.pos)
                 agent_data[ag]["dir"].append(env.unwrapped.agents[ag].state.dir)
                 ## padding for final step where no action is taken
