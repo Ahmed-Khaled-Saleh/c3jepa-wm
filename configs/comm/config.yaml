@@ -72,11 +72,37 @@ evaluation:                    # on the test layouts (c3jepa_wm.comm.evaluation)
   network_targets: [0.95, 0.99]   # the κ and τ chosen for these targets (each one of `targets`)
   network_layouts: 10          # the first test layouts it runs on (null: all)
 
+deployment:                    # layouts grouped by their distance to the training layouts (c3jepa_wm.comm.deployment)
+  enabled: true                # chosen in `collect` (<data_dir>/deployment.json, then kept), collected, traced and judged per group
+  groups:                      # group: [lo, hi] of the normalized edit distance to the nearest training layout (0: same walls, 1: none in common)
+    in-distribution: [0.0, 0.15]
+    slightly OOD: [0.2, 0.4]
+    OOD: [0.55, 1.0]
+  edited: [in-distribution, slightly OOD]   # made by editing training layouts (cells flipped, as many walls); the others: new layouts
+  per_group: 30
+  pool: [1000, 20000]          # reset seeds of the new layouts (outside `layouts`)
+  first_id: 1000000            # the edited layouts' ids
+  episodes: 10                 # per deployment layout: the first `pilot` for the per-layout calibration, the rest judged
+  pilot: 2
+  seed: 0                      # of the edits
+  overwrite: false             # choose the layouts again (then collect and trace them again: rollouts.overwrite, a new data_dir)
+
+adaptation:                    # the margin chosen in the deployment layout itself
+  predictors: [geometry + history mean, geometry + history quantile (learned)]   # each also with per-layout and online κ
+  min_servable: 50             # per-layout: servable pilot transmissions needed (fewer: the offline κ)
+  confidence: 0.9              # per-layout: κ whose reliability on the pilot reaches the target by this lower confidence bound (null: the reliability)
+  online:                      # outer-loop: κ up δ on a failure, down δ(1-p)/p on a success; δ and p chosen on the calibration layouts
+    steps_db: [0.25, 0.5, 1.0, 2.0]
+    failure_scales: [1.0, 0.75, 0.5, 0.25]   # p = 1 - (1 - target) × each
+    bounds_db: [-10.0, 30.0]   # κ within the offline κ + these
+
 monte_carlo:                   # fitting + calibration + evaluation again on new splits of the traced layouts (nothing traced again)
   runs: 10                     # run 0: the split in `layouts` (the saved power control); runs 1..: new splits of the same layouts
   resplit: true                # each run draws its train / calibration / test layouts from all of them, of the sizes in `layouts`
+                               # (the edited deployment layouts' bases always in training)
   network: false               # the network comparison in runs 1.. too (slow; run 0 has it if evaluation.network)
   snr_sweep: false             # the Γ sweep in runs 1.. too
+  deployment: true             # the deployment evaluation in runs 1.. too
   seed: 0                      # of the splits
 
 wandb:

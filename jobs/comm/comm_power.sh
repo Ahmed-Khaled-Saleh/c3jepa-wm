@@ -14,7 +14,10 @@
 # The learned power control on Roihu, every stage in one job (mains/comm_power.py, configs/comm/config.yaml):
 #   collect (CPU: trajectories)  ->  trace (GPU: Sionna RT, the visited pairs)  ->  train  ->  evaluate (+ Monte Carlo)
 # Each stage skips what is done already (trajectories, traced pairs), so the same job can be submitted again if it
-# runs out of time. Override anything at submission, e.g.
+# runs out of time. `collect` also chooses the deployment layouts (deployment.json: in-distribution, slightly OOD and
+# OOD, by their distance to the training layouts), which `trace` traces and `evaluate` judges per group, with the
+# margin also chosen per layout and adapted online (deployment.*, adaptation.*). On a data_dir traced before, STAGE=all
+# adds only the deployment layouts. Override anything at submission, e.g.
 #   sbatch comm_power.sh                                         # every stage, the config's 260 layouts
 #   STAGE=trace sbatch comm_power.sh                             # one stage
 #   EXTRA="monte_carlo.runs=20 link.fading=rayleigh" STAGE=evaluate sbatch comm_power.sh

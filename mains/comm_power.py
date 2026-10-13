@@ -4,8 +4,11 @@
     python comm_power.py stage=trace shard.index=$SLURM_ARRAY_TASK_ID shard.count=$SLURM_ARRAY_TASK_COUNT
 
 `evaluate` judges the saved power control on the test layouts (run 0), then fits, calibrates and judges again on new
-splits of the same traced layouts (`monte_carlo`, runs 1..), and reports the spread over the runs. Everything is logged
-to wandb (`wandb`), and written to `<data_dir>/results.json`.
+splits of the same traced layouts (`monte_carlo`, runs 1..), and reports the spread over the runs. With `deployment`,
+it also judges every method on deployment layouts grouped by their distance to the training layouts (in-distribution,
+slightly OOD, OOD: chosen in `collect`, `<data_dir>/deployment.json`), with the margin also chosen per layout from a
+pilot and adapted online (c3jepa_wm.comm.deployment). Everything is logged to wandb (`wandb`), and written to
+`<data_dir>/results.json`.
 """
 import json
 import math
@@ -20,6 +23,8 @@ from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 
 from c3jepa_wm.comm.channel_data import build_dataset, collect_trajectories, trace_layouts, trace_visited_pairs
+from c3jepa_wm.comm.deployment import (deployment_layouts, deployment_summary, deployment_table, evaluate_deployment,
+                                       layout_edits_of, load_deployment, plot_deployment, save_deployment)
 from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_control, fit_baselines, layout_summary, network_summary,
                                        plot_frontiers, plot_layout_spread, plot_snr, snr_summary, summary)
 from c3jepa_wm.comm.power_control import (Budget, calibrate, evaluate, fit_predictor, load_power_control,
@@ -126,15 +131,33 @@ def _join(per_layout: dict, layouts) -> dict:
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
 
 
-def _split(cfg, run: int) -> dict:
-    "Run 0: the split in `layouts`; run r: a new draw of the same sizes from all of them (`monte_carlo.resplit`)."
+def _split(cfg, run: int, pinned=()) -> dict:
+    """Run 0: the split in `layouts`; run r: a new draw of the same sizes from all of them (`monte_carlo.resplit`),
+    with the `pinned` layouts (the edited deployment layouts' bases) always in training."""
     seeds = {k: list(range(*cfg.layouts[k])) for k in SPLITS}
     if run == 0 or not cfg.monte_carlo.resplit:
         return seeds
-    pool = np.array(sorted(set().union(*seeds.values())))
+    pinned = sorted(set(int(s) for s in pinned))
+    pool = np.array(sorted(set().union(*seeds.values()) - set(pinned)))
     order = np.random.default_rng([cfg.monte_carlo.seed, run]).permutation(pool)
-    sizes = np.cumsum([len(seeds[k]) for k in SPLITS])
-    return {k: sorted(int(s) for s in part) for k, part in zip(SPLITS, np.split(order, sizes[:-1]))}
+    sizes = np.cumsum([len(seeds['train']) - len(pinned), len(seeds['calibration'])])
+    parts = dict(zip(SPLITS, np.split(order, sizes)))
+    parts['train'] = np.r_[parts['train'], pinned]
+    return {k: sorted(int(s) for s in parts[k]) for k in SPLITS}
+
+
+def _deployment(cfg, data: Path, train) -> dict | None:
+    "The deployment layouts (`deployment.json`): chosen against the training layouts of `layouts` the first time, then read."
+    d = cfg.deployment
+    if not d.enabled:
+        return None
+    path = data / 'deployment.json'
+    if path.exists() and not d.overwrite:
+        return load_deployment(path)
+    groups = {name: tuple(float(x) for x in band) for name, band in d.groups.items()}
+    deployment = deployment_layouts(cfg.env, train, range(*d.pool), groups, tuple(d.edited), d.per_group, d.seed, d.first_id)
+    save_deployment(path, deployment)
+    return load_deployment(path)
 
 
 def _taus(cfg) -> list:
@@ -176,6 +199,41 @@ def network(cfg, data, saved, sets, comparison, fitted, layouts, seed) -> dict:
                                       fading_correlation=cfg.link.fading_correlation, symmetric=cfg.link.symmetric,
                                       message_bits=e.message_bits, bits_per_token=e.bits_per_token, seed=seed)
             for t in e.network_targets}
+
+
+def deploy(cfg, saved: dict, sets: dict, deployment: dict, fitted: dict) -> dict:
+    "`evaluate_deployment` with the config's targets, calibration and adaptation."
+    a, e = cfg.adaptation, cfg.evaluation
+    return evaluate_deployment(saved, sets, deployment, fitted, targets=tuple(float(t) for t in e.targets), taus_db=_taus(cfg),
+                               slack=cfg.calibration.slack, pilot=cfg.deployment.pilot, confidence=a.confidence,
+                               adapt=tuple(a.predictors), min_servable=a.min_servable, steps_db=tuple(a.online.steps_db),
+                               failure_scales=tuple(a.online.failure_scales), bounds_db=tuple(a.online.bounds_db),
+                               quantile=cfg.predictor.quantile or 0.05, max_iter=cfg.predictor.max_iter)
+
+
+DEPLOY_METRICS = ('reliability', 'power', 'withheld', 'layout_p10', 'layout_min', 'layout_below')
+
+def deploy_metrics(results: dict) -> list:
+    "Rows (method, target, '<group>/<metric>', value) of a run's deployment results."
+    return [(n, t, f'{g}/{k}', o['groups'][g][k]) for n, r in results['methods'].items() for t, o in r['targets'].items()
+            for g in o['groups'] for k in DEPLOY_METRICS if k in o['groups'][g]]
+
+
+def deploy_mc_summary(agg: list, targets, groups) -> str:
+    "A text table: per method and target, per group the mean ± std over the runs of the reliability and the power."
+    get = {(n, t, k): (m, s) for n, t, k, m, s, *_ in agg}
+    names = list(dict.fromkeys(n for n, *_ in agg))
+    w = max(map(len, names)) + 2
+    lines = []
+    for t in targets:
+        lines += [f"target {100 * t:g}%", f"{'':{w}s}" + ''.join(f"{g + ': reached / power':>33s}" for g in groups)]
+        for n in names:
+            row = f"{n:{w}s}"
+            for g in groups:
+                (r, rs), (p, ps) = (get.get((n, t, f'{g}/{k}'), (math.nan, math.nan)) for k in ('reliability', 'power'))
+                row += f"{100 * r:14.1f}±{100 * rs:3.1f}%  {p:6.2f}±{ps:4.2f}×"
+            lines.append(row)
+    return '\n'.join(lines)
 
 
 METRICS = ('reliability', 'power', 'withheld', 'error_free')
@@ -239,6 +297,10 @@ def main(cfg: DictConfig):
     every = seeds['train'] + seeds['calibration'] + seeds['test']
     mine = every[cfg.shard.index::cfg.shard.count]
     stages = ('collect', 'trace', 'train', 'evaluate') if cfg.stage == 'all' else (cfg.stage,)
+    deployment = _deployment(cfg, data, seeds['train']) if {'collect', 'trace', 'evaluate'} & set(stages) else None
+    edits = layout_edits_of(deployment) if deployment else {}
+    deployed = [k for ids in deployment['groups'].values() for k in ids] if deployment else []
+    mine_deployed = deployed[cfg.shard.index::cfg.shard.count]
     if cfg.shard.count > 1 and {'train', 'evaluate'} & set(stages):
         raise ValueError("train and evaluate read every layout: run them once (shard.count=1), after the shards' collect and trace")
     budget = _budget(cfg)
@@ -251,6 +313,15 @@ def main(cfg: DictConfig):
         collect_trajectories(cfg.env, mine, data / 'trajectories', episodes=r.episodes, max_steps=r.max_steps,
                              policy=OmegaConf.to_container(r.policy), epsilon=r.epsilon, seed=r.seed, overwrite=r.overwrite)
         logger.info(f"{len(mine)} layouts' trajectories in {data / 'trajectories'} ({time.time() - start:.0f} s)")
+        if deployment:
+            logger.info('deployment layouts (' + str(data / 'deployment.json') + '):\n' + deployment_summary(deployment))
+            collect_trajectories(cfg.env, mine_deployed, data / 'trajectories', episodes=cfg.deployment.episodes,
+                                 max_steps=r.max_steps, policy=OmegaConf.to_container(r.policy), epsilon=r.epsilon,
+                                 seed=r.seed, overwrite=r.overwrite, edits=edits)
+            logger.info(f"{len(mine_deployed)} deployment layouts' trajectories ({cfg.deployment.episodes} episodes each)")
+            log.table('deploy/layouts', ['layout', 'group', 'base', 'distance', 'edits', 'walls', 'nearest'],
+                      [[k, v['group'], v['base'], v['distance'], v['edits'], v['walls'], v['nearest']]
+                       for k, v in deployment['layouts'].items()])
         log.summary({'collect/layouts': len(mine), 'collect/seconds': time.time() - start})
 
     if 'trace' in stages:
@@ -259,10 +330,11 @@ def main(cfg: DictConfig):
         logger.info(f"Sionna RT on Mitsuba's {variant}")
         options = dict(frequency=t.frequency, max_depth=t.max_depth, scene=OmegaConf.to_container(t.scene),
                        **OmegaConf.to_container(t.solver))
+        mine = mine + mine_deployed
         if t.mode == 'pairs':
-            trace_visited_pairs(cfg.env, data / 'trajectories', mine, data / 'layouts', **options)
+            trace_visited_pairs(cfg.env, data / 'trajectories', mine, data / 'layouts', edits=edits, **options)
         elif t.mode == 'full':
-            trace_layouts(cfg.env, mine, data / 'layouts', overwrite=t.overwrite, **options)
+            trace_layouts(cfg.env, mine, data / 'layouts', overwrite=t.overwrite, edits=edits, **options)
         else:
             raise ValueError(f"tracing.mode: pairs or full, not {t.mode!r}")
         pairs = sum(len(np.load(p)['H']) for k in mine
@@ -350,11 +422,34 @@ def main(cfg: DictConfig):
                        for t, r in out['network'].items() for n, m in r.items() for src in ('network', 'analysis')])
         log.summary({'evaluate/seconds': time.time() - start})
 
+        deployed_runs = []
+        if deployment:                              # the deployment layouts, per group; the margin also per layout and online
+            start = time.time()
+            d_sets = dict(sets_of({k: seeds[k] for k in ('train', 'calibration')}, cfg.link.seed),
+                          deployment=sets_of({'deployment': deployed}, cfg.link.seed)['deployment'])
+            out['deployment'] = deploy(cfg, saved, d_sets, deployment, fitted)
+            deployed_runs.append(deploy_metrics(out['deployment']))
+            for t in e.targets:
+                logger.info('\n' + deployment_table(out['deployment'], float(t)))
+                path = data / f'deployment_{100 * float(t):g}.png'
+                plot_deployment(out['deployment'], float(t), path)
+                images[f'deploy/groups_{100 * float(t):g}'] = path
+            log.table('deploy/methods', ['method', 'target', 'group', 'reliability', 'power', 'withheld', 'layout_p10',
+                                         'layout_min', 'layout_below', 'margin_db', 'tau_db', 'step_db', 'success'],
+                      [[n, t, g, *(o['groups'][g].get(k) for k in DEPLOY_METRICS), o['margin_db'], o['tau_db'],
+                        o.get('step_db'), o.get('success')]
+                       for n, r in out['deployment']['methods'].items() for t, o in r['targets'].items() for g in o['groups']])
+            log.table('deploy/prediction', ['method', 'group', 'bias_db', 'spread_db', 'coverage'],
+                      [[n, g, *(p[k] for k in ('bias_db', 'spread_db', 'coverage'))]
+                       for n, r in out['deployment']['methods'].items() for g, p in r['prediction'].items()])
+            log.images({k: v for k, v in images.items() if k.startswith('deploy/')})
+            log.summary({'deploy/seconds': time.time() - start, 'deploy/transmissions': out['deployment']['transmissions']})
+
         # runs 1..: fitted, calibrated and judged again on new splits of the same layouts (nothing traced again)
         runs, per_run = [metrics(comparison)], [dict(run=0, layouts=seeds, calibration=c)]
         for run in range(1, mc.runs):
             start = time.time()
-            split = _split(cfg, run)
+            split = _split(cfg, run, [v['base'] for v in edits.values()])
             sets = sets_of(split, cfg.link.seed + run)
             model, chosen = fit_and_calibrate(cfg, sets)
             saved_r = dict(model=model, history=cfg.link.history, calibration=chosen, budget=budget)
@@ -366,6 +461,13 @@ def main(cfg: DictConfig):
             if mc.network and e.network:
                 layouts = split['test'][:e.network_layouts] if e.network_layouts else split['test']
                 entry['network'] = network(cfg, data, saved_r, sets, comparison_r, fitted_r, layouts, cfg.link.seed + run)
+            if deployment and mc.deployment:
+                d_sets = sets_of({'train': split['train'], 'calibration': split['calibration'], 'deployment': deployed},
+                                 cfg.link.seed + run)
+                entry['deployment'] = deploy(cfg, saved_r, d_sets, deployment, fitted_r)
+                deployed_runs.append(deploy_metrics(entry['deployment']))
+                entry['deployment'] = {n: {t: {k: o[k] for k in ('margin_db', 'tau_db', 'step_db', 'success') if k in o}
+                                           for t, o in r['targets'].items()} for n, r in entry['deployment']['methods'].items()}
             per_run.append(entry)
             learned = comparison_r['predictors'][LEARNED]['targets']
             logger.info(f"run {run} / {mc.runs - 1}: " + ', '.join(f"{100 * t:g}%: {100 * o['reliability']:.1f}% at "
@@ -385,6 +487,18 @@ def main(cfg: DictConfig):
                   [[i, *r] for i, rows in enumerate(runs) for r in rows])
         log.summary({f'mc/{n}/{t}/{k}_{stat}': v for n, t, k, m, s, ci, *_ in agg if t is not None
                      for stat, v in (('mean', m), ('std', s), ('ci95', ci))})
+        if deployed_runs:
+            d_agg = aggregate(deployed_runs)
+            groups = ['all', *deployment['groups']]
+            out['deployment_monte_carlo'] = dict(metrics=[dict(method=n, target=t, metric=k, mean=m, std=s, ci95=ci, min=lo,
+                                                               max=hi, n=cnt) for n, t, k, m, s, ci, lo, hi, cnt in d_agg])
+            logger.info(f"deployment over {len(deployed_runs)} runs, mean ± std:\n"
+                        + deploy_mc_summary(d_agg, [float(t) for t in e.targets], groups))
+            log.table('deploy_mc/summary', ['method', 'target', 'metric', 'mean', 'std', 'ci95', 'min', 'max', 'runs'],
+                      [list(r) for r in d_agg])
+            log.summary({f'deploy_mc/{n}/{t}/{k}_{stat}': v for n, t, k, m, s, ci, *_ in d_agg
+                         if k.split('/')[1] in ('reliability', 'power', 'layout_p10')
+                         for stat, v in (('mean', m), ('std', s))})
         (data / 'results.json').write_text(json.dumps(out, indent=1, default=str))
         log.files('comm-power-results', [data / 'results.json', data / 'power_control.pkl', *images.values()])
     log.finish()

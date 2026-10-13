@@ -15,7 +15,8 @@ from pathlib import Path
 import numpy as np
 
 # %% auto #0
-__all__ = ['DIRS', 'make_env', 'free_cells', 'reset_in_layout', 'trace_layouts', 'wall_geometry', 'ChannelTable', 'table_path',
+__all__ = ['DIRS', 'make_env', 'free_cells', 'reset_layout', 'reset_in_layout', 'interior_walls', 'layout_edits', 'edit_distance',
+           'layout_distance', 'nearest_layout', 'trace_layouts', 'wall_geometry', 'ChannelTable', 'table_path',
            'collect_trajectories', 'PairCache', 'visited_pairs', 'trace_visited_pairs', 'CachedRayTracedFading', 'db',
            'features', 'episode_fading', 'link_samples', 'build_dataset']
 
@@ -63,13 +64,25 @@ def free_cells(env) -> list[tuple[int, int]]:
     g = env.unwrapped.grid
     return [(x, y) for x in range(g.width) for y in range(g.height) if (o := g.get(x, y)) is None or o.can_overlap()]
 
-def reset_in_layout(env, layout_seed: int, rng: np.random.Generator):
-    """Reset `env` to the layout of `layout_seed`, then move the goal and the agents to random free cells (random
-    headings): many episodes in one layout. (A reset seed fixes the goal and the starts as well as the layout.) As
-    FindGoal's own spawn rule: the agents on distinct cells at least `goal.min_spawn_distance` steps (Manhattan) from
-    the goal, or as far as the layout allows."""
+def reset_layout(env, layout: int, edits: dict | None = None):
+    """Reset `env` to `layout`: the layout of its reset seed or, for an edited layout (a key of `edits`), the layout of
+    its base seed with `edits[layout]['cells']` flipped (`[x, y, 1]`: a wall added, `[x, y, 0]`: a wall removed)."""
+    from stable_marl.envs.multigrid.core.world_object import Wall
+    spec = (edits or {}).get(int(layout))
+    env.reset(seed=int(spec['base'] if spec else layout))
+    if spec:
+        g = env.unwrapped.grid
+        for x, y, wall in spec['cells']:
+            g.set(int(x), int(y), Wall() if wall else None)
+    return env
+
+def reset_in_layout(env, layout_seed: int, rng: np.random.Generator, edits: dict | None = None):
+    """Reset `env` to the layout of `layout_seed` (`reset_layout`), then move the goal and the agents to random free
+    cells (random headings): many episodes in one layout. (A reset seed fixes the goal and the starts as well as the
+    layout.) As FindGoal's own spawn rule: the agents on distinct cells at least `goal.min_spawn_distance` steps
+    (Manhattan) from the goal, or as far as the layout allows."""
     from stable_marl.envs.multigrid.core.world_object import Goal
-    env.reset(seed=int(layout_seed))
+    reset_layout(env, layout_seed, edits)
     u = env.unwrapped
     goal = getattr(u, 'goal_pos', None)
     if goal is not None:
@@ -95,6 +108,62 @@ def reset_in_layout(env, layout_seed: int, rng: np.random.Generator):
         agent.state.dir = int(rng.integers(4))
     return env
 
+# %% ../../nbs/09a_comm.channel_data.ipynb #5e8f2b01
+def interior_walls(env) -> np.ndarray:
+    "The layout's interior wall cells (the outer wall left out): a boolean (width - 2, height - 2) array."
+    from stable_marl.envs.multigrid.core.constants import Type
+    g = env.unwrapped.grid
+    return np.array([[(o := g.get(x, y)) is not None and o.type == Type.wall for y in range(1, g.height - 1)]
+                     for x in range(1, g.width - 1)])
+
+def _connected(free: set) -> bool:
+    "Whether the cells are 4-connected."
+    if not free:
+        return False
+    start = next(iter(free))
+    seen, stack = {start}, [start]
+    while stack:
+        x, y = stack.pop()
+        for c in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if c in free and c not in seen:
+                seen.add(c)
+                stack.append(c)
+    return len(seen) == len(free)
+
+def layout_edits(env, k: int, rng: np.random.Generator, tries: int = 100) -> list[list[int]]:
+    """`k` interior cells of `env`'s current layout to flip (`reset_layout`'s `cells`): `k // 2` of its walls removed
+    (all if fewer) and the rest added on empty cells, with the free cells still connected."""
+    from stable_marl.envs.multigrid.core.constants import Type
+    g = env.unwrapped.grid
+    inner = [(x, y) for x in range(1, g.width - 1) for y in range(1, g.height - 1)]
+    walls = [c for c in inner if (o := g.get(*c)) is not None and o.type == Type.wall]
+    empty = [c for c in inner if g.get(*c) is None]
+    free = set(free_cells(env))
+    n_remove = min(k // 2, len(walls))
+    n_add = min(k - n_remove, len(empty) - 2)
+    for _ in range(tries):
+        removed = [walls[i] for i in rng.choice(len(walls), n_remove, replace=False)]
+        added = [empty[i] for i in rng.choice(len(empty), n_add, replace=False)]
+        if _connected((free | set(removed)) - set(added)):
+            return [[int(x), int(y), 0] for x, y in removed] + [[int(x), int(y), 1] for x, y in added]
+    raise RuntimeError(f"no {k} edits keep the layout connected in {tries} tries")
+
+def edit_distance(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    "The number of cells that are a wall in one layout and not in the other (`interior_walls`; stacks broadcast)."
+    return (np.asarray(a, bool) != np.asarray(b, bool)).reshape(*np.broadcast_shapes(np.shape(a), np.shape(b))[:-2], -1).sum(-1)
+
+def layout_distance(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    "The edit distance over the cells that are a wall in either layout: 0 the same walls, 1 none in common."
+    a, b = np.asarray(a, bool), np.asarray(b, bool)
+    union = (a | b).reshape(*np.broadcast_shapes(a.shape, b.shape)[:-2], -1).sum(-1)
+    return np.where(union > 0, edit_distance(a, b) / np.maximum(union, 1), 0.0)
+
+def nearest_layout(walls: np.ndarray, reference: np.ndarray) -> tuple[int, int, float]:
+    "Of the `reference` layouts (a stack of `interior_walls`), the nearest to `walls`: (its index, the edit distance, the normalized distance)."
+    d = layout_distance(walls[None], reference)
+    i = int(np.argmin(d))
+    return i, int(edit_distance(walls, reference[i])), float(d[i])
+
 # %% ../../nbs/09a_comm.channel_data.ipynb #1e41efd9
 def _scene_config(scene: dict | None):
     "stable-marl's `SceneConfig`, with `scene`'s fields replaced (dict fields, e.g. `materials`, updated)."
@@ -116,9 +185,10 @@ def trace_layouts(
     scene: dict | None = None, # `SceneConfig` fields to change, e.g. {'materials': {'inner_wall': 'brick'}}
     overwrite: bool = False, # Trace again the layouts already in `out_dir`
     progress: bool = True, # Print each layout's tracing time
+    edits: dict | None = None, # The edited layouts among `seeds` (`reset_layout`)
     **solver_kwargs, # Other options of Sionna RT's PathSolver, e.g. samples_per_src
 ) -> list[Path]:
-    "Ray-trace the layout of each reset seed into `<out_dir>/layout_<seed>.npz`."
+    "Ray-trace the layout of each reset seed (or edited layout) into `<out_dir>/layout_<seed>.npz`."
     import time
     from stable_marl.envs.multigrid.sionna_export import trace_channel_table
     out_dir = Path(out_dir)
@@ -129,12 +199,11 @@ def trace_layouts(
         paths.append(path)
         if path.exists() and not overwrite:
             continue
-        env = make_env(env_cfg)
-        env.reset(seed=int(seed))
+        env = reset_layout(make_env(env_cfg), seed, edits)
         start = time.time()
         table = trace_channel_table(env, _scene_config(scene), frequency, max_depth, **solver_kwargs)
         source = dict(env=_plain(env_cfg), seed=int(seed), frequency=frequency, max_depth=max_depth, scene=scene or {},
-                      solver=solver_kwargs)
+                      solver=solver_kwargs, edit=(edits or {}).get(int(seed)))
         np.savez_compressed(path, H=table['H'].astype(np.complex64), cells=table['cells'].astype(np.int16),
                             walls=table['walls'].astype(np.uint8), source=json.dumps(source, default=str))
         if progress:
@@ -197,6 +266,7 @@ def collect_trajectories(
     epsilon: float = 0.3, # The random actions of `epsilon_expert`
     seed: int = 0, # Seed of the starts and the actions
     overwrite: bool = False, # Collect again the layouts already in `out_dir`
+    edits: dict | None = None, # The edited layouts among `seeds` (`reset_layout`)
 ) -> list[Path]:
     "Every agent's cell and heading at every step of `episodes` episodes in the layout of each seed."
     from stable_marl.envs.multigrid.expert import MixedPolicy
@@ -217,7 +287,7 @@ def collect_trajectories(
         dirs = np.full((episodes, max_steps, n), -1, np.int8)
         used = []
         for e in range(episodes):
-            reset_in_layout(env, layout, rng)
+            reset_in_layout(env, layout, rng, edits)
             u = env.unwrapped
             for t in range(max_steps):
                 for i, agent in enumerate(u.agents):
@@ -246,13 +316,13 @@ class PairCache:
         max_depth: int = 5, # Reflections per path
         scene: dict | None = None, # `SceneConfig` fields to change
         tracer=None, # tracer(tx_cell, rx_cells) -> their complex channels; None: Sionna RT (e.g. a stand-in for tests)
+        edits: dict | None = None, # The edited layouts (`reset_layout`), if `layout_seed` is one
         **solver_kwargs, # Other options of comm-core's `trace_paths` (e.g. batch) and Sionna RT's PathSolver
     ):
         self.path, self.env_cfg, self.seed = Path(path), env_cfg, int(layout_seed)
         self.frequency, self.max_depth, self.scene, self.solver_kwargs = frequency, max_depth, scene or {}, solver_kwargs
-        self.tracer, self._scene = tracer, None
-        self.env = make_env(env_cfg)
-        self.env.reset(seed=self.seed)
+        self.tracer, self._scene, self.edit = tracer, None, (edits or {}).get(self.seed)
+        self.env = reset_layout(make_env(env_cfg), self.seed, edits)
         self.cells = free_cells(self.env)
         g = self.env.unwrapped.grid
         self.walls = np.ones((g.width, g.height), np.uint8)
@@ -262,7 +332,7 @@ class PairCache:
         if self.path.exists():
             z = np.load(self.path)
             if [tuple(c) for c in z['cells'].tolist()] != self.cells:
-                raise ValueError(f"{self.path} holds another layout than the reset seed {self.seed}'s")
+                raise ValueError(f"{self.path} holds another layout than layout {self.seed}'s")
             self.H = {_pair(a, b): complex(h) for (a, b), h in zip(z['pairs'].tolist(), z['H'])}
 
     def missing(self, pairs) -> list[tuple]:
@@ -314,7 +384,7 @@ class PairCache:
         "Write the cache to `path`."
         pairs = sorted(self.H)
         source = dict(env=_plain(self.env_cfg), seed=self.seed, frequency=self.frequency, max_depth=self.max_depth,
-                      scene=self.scene, solver=self.solver_kwargs)
+                      scene=self.scene, solver=self.solver_kwargs, edit=self.edit)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(self.path, pairs=np.array(pairs, np.int16).reshape(-1, 2, 2),
                             H=np.array([self.H[p] for p in pairs], np.complex64), cells=np.array(self.cells, np.int16),
@@ -345,13 +415,15 @@ def trace_visited_pairs(
     scene: dict | None = None, # `SceneConfig` fields to change
     progress: bool = True, # Print each layout's count and time
     tracer=None, # A stand-in for Sionna RT (see `PairCache`)
+    edits: dict | None = None, # The edited layouts among `seeds` (`reset_layout`)
     **solver_kwargs, # Other options of `trace_paths` and Sionna RT's PathSolver
 ) -> list[Path]:
     "Trace the pairs of cells each layout's trajectories visit, into its `PairCache` (only the pairs not traced yet)."
     import time
     paths = []
     for seed in seeds:
-        cache = PairCache(Path(out_dir) / f'pairs_{seed}.npz', env_cfg, seed, frequency, max_depth, scene, tracer, **solver_kwargs)
+        cache = PairCache(Path(out_dir) / f'pairs_{seed}.npz', env_cfg, seed, frequency, max_depth, scene, tracer, edits,
+                          **solver_kwargs)
         start = time.time()
         pairs = visited_pairs(Path(trajectory_dir) / f'trajectories_{seed}.npz')
         traced = cache.trace(pairs)
@@ -480,14 +552,15 @@ def build_dataset(
     symmetric: bool = True, # Average the two directions of each traced pair
     seed: int = 0, # Seed of the fading
 ) -> dict:
-    "`link_samples` of every episode in the layouts of `seeds`, concatenated, with each sample's `layout`."
+    "`link_samples` of every episode in the layouts of `seeds`, concatenated, with each sample's `layout` and `episode`."
     parts = []
     for layout in seeds:
         table = ChannelTable(table_path(layout_dir, layout), symmetric=symmetric)
         z = np.load(Path(trajectory_dir) / f'trajectories_{layout}.npz')
         rng = np.random.default_rng([seed, int(layout)])
-        for cells, dirs in zip(z['cells'], z['dirs']):
+        for e, (cells, dirs) in enumerate(zip(z['cells'], z['dirs'])):
             s = link_samples(table, cells, dirs, history, fading, fading_correlation, rng)
             s['layout'] = np.full(len(s['gain']), int(layout))
+            s['episode'] = np.full(len(s['gain']), e)
             parts.append(s)
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
