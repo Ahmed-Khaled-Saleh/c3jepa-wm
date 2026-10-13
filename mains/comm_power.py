@@ -25,8 +25,9 @@ from omegaconf import DictConfig, OmegaConf
 from c3jepa_wm.comm.channel_data import build_dataset, collect_trajectories, trace_layouts, trace_visited_pairs
 from c3jepa_wm.comm.deployment import (deployment_layouts, deployment_summary, deployment_table, evaluate_deployment,
                                        layout_edits_of, load_deployment, plot_deployment, save_deployment)
-from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_control, fit_baselines, layout_summary, network_summary,
-                                       plot_frontiers, plot_layout_spread, plot_snr, snr_summary, summary)
+from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_control, fit_baselines, guarantee_summary,
+                                       layout_summary, network_summary, plot_frontiers, plot_layout_spread, plot_snr, snr_summary,
+                                       summary)
 from c3jepa_wm.comm.power_control import (Budget, calibrate, evaluate, fit_predictor, load_power_control,
                                           predict_gain, save_power_control)
 
@@ -187,8 +188,14 @@ def judge(cfg, saved: dict, sets: dict, snr_sweep: bool) -> tuple:
     comparison = evaluate_power_control(saved, sets, targets=tuple(e.targets), taus_db=_taus(cfg), slack=cfg.calibration.slack,
                                         quantile=cfg.predictor.quantile or 0.05, max_iter=cfg.predictor.max_iter,
                                         message_bits=e.message_bits, bits_per_token=e.bits_per_token, compare=e.baselines,
-                                        snr_targets_db=snrs, fitted=fitted)
+                                        snr_targets_db=snrs, fitted=fitted, **_over_layouts(cfg))
     return comparison, fitted
+
+
+def _over_layouts(cfg) -> dict:
+    "`calibration.layouts` as `evaluate_power_control`'s arguments (none if `coverage` is null)."
+    c = cfg.calibration.layouts
+    return dict(layout_coverage=c.coverage, layout_confidence=c.confidence, min_servable=c.min_servable) if c.coverage else {}
 
 
 def network(cfg, data, saved, sets, comparison, fitted, layouts, seed) -> dict:
@@ -208,10 +215,13 @@ def deploy(cfg, saved: dict, sets: dict, deployment: dict, fitted: dict) -> dict
                                slack=cfg.calibration.slack, pilot=cfg.deployment.pilot, confidence=a.confidence,
                                adapt=tuple(a.predictors), min_servable=a.min_servable, steps_db=tuple(a.online.steps_db),
                                failure_scales=tuple(a.online.failure_scales), bounds_db=tuple(a.online.bounds_db),
-                               quantile=cfg.predictor.quantile or 0.05, max_iter=cfg.predictor.max_iter)
+                               quantile=cfg.predictor.quantile or 0.05, max_iter=cfg.predictor.max_iter,
+                               layout_coverage=cfg.calibration.layouts.coverage or None,
+                               layout_confidence=cfg.calibration.layouts.confidence)
 
 
-DEPLOY_METRICS = ('reliability', 'power', 'withheld', 'layout_p10', 'layout_min', 'layout_below')
+DEPLOY_METRICS = ('reliability', 'power', 'withheld', 'layout_p10', 'layout_min', 'layout_below', 'layout_significantly_below',
+                  'layout_between_std')
 
 def deploy_metrics(results: dict) -> list:
     "Rows (method, target, '<group>/<metric>', value) of a run's deployment results."
@@ -237,7 +247,7 @@ def deploy_mc_summary(agg: list, targets, groups) -> str:
 
 
 METRICS = ('reliability', 'power', 'withheld', 'error_free')
-LAYOUT_METRICS = ('min', 'p10', 'std', 'below')
+LAYOUT_METRICS = ('min', 'p10', 'std', 'below', 'significantly_below', 'between_std')
 
 def metrics(comparison: dict) -> list:
     "Rows (predictor, target, metric, value) of a run: per target its reliability, power, withheld, error-free, κ, τ and per-layout spread; the prediction's errors."
@@ -248,7 +258,32 @@ def metrics(comparison: dict) -> list:
         for t, o in r['targets'].items():
             rows += [(name, t, k, o[k]) for k in (*METRICS, 'margin_db', 'tau_db')]
             rows += [(name, t, f'layout_{k}', r['layouts'][t][k]) for k in LAYOUT_METRICS if k in r['layouts'][t]]
+        for t, o in r.get('layout_targets', {}).items():               # κ and τ chosen over layouts
+            rows += [(name, t, f'over_layouts/{k}', o[k]) for k in ('reliability', 'power', 'withheld', 'margin_db', 'tau_db')]
+            rows += [(name, t, 'over_layouts/met_on_calibration', float(o['met_on_calibration']))]
+            rows += [(name, t, f'over_layouts/layout_{k}', o['layouts'][k]) for k in LAYOUT_METRICS if k in o['layouts']]
     return rows
+
+
+def guarantee_mc_summary(agg: list, targets) -> str:
+    """A text table over the runs: per predictor and target, κ and τ chosen pooled and over layouts: the reliability
+    (pooled), the power, and the share of test layouts reaching the target (its mean over runs: the guarantee's check)."""
+    get = {(n, t, k): (m, s) for n, t, k, m, s, *_ in agg}
+    names = [n for n in dict.fromkeys(n for n, *_ in agg) if (n, targets[0], 'over_layouts/power') in get]
+    if not names:
+        return ''
+    w = max(map(len, names)) + 2
+    lines = [f"{'':{w}s}" + ''.join(f"{f'{100 * t:g}%  pooled':>34s}{'over layouts':>34s}" for t in targets)]
+    for n in names:
+        row = f"{n:{w}s}"
+        for t in targets:
+            for pre in ('', 'over_layouts/'):
+                (r, rs), (p, ps), (b, bs) = (get.get((n, t, pre + k), (math.nan, math.nan))
+                                             for k in ('reliability', 'power', 'layout_below'))
+                row += f"{100 * r:12.1f}±{100 * rs:3.1f}% {p:6.2f}±{ps:4.2f}× {100 * (1 - b):5.0f}%"
+        lines.append(row)
+    lines.append('per target and choice: reached (pooled), power, and the share of test layouts reaching the target (mean over runs)')
+    return '\n'.join(lines)
 
 
 def aggregate(runs: list) -> list:
@@ -310,7 +345,7 @@ def main(cfg: DictConfig):
 
     if 'collect' in stages:
         start, r = time.time(), cfg.rollouts
-        collect_trajectories(cfg.env, mine, data / 'trajectories', episodes=r.episodes, max_steps=r.max_steps,
+        collect_trajectories(cfg.env, mine, data / 'trajectories', episodes=max(r.episodes, r.eval_episodes or 0), max_steps=r.max_steps,
                              policy=OmegaConf.to_container(r.policy), epsilon=r.epsilon, seed=r.seed, overwrite=r.overwrite)
         logger.info(f"{len(mine)} layouts' trajectories in {data / 'trajectories'} ({time.time() - start:.0f} s)")
         if deployment:
@@ -352,7 +387,11 @@ def main(cfg: DictConfig):
             cache[seed] = {}
         need = [k for v in split.values() for k in v if k not in cache[seed]]
         cache[seed].update(_per_layout(cfg, data, need, seed))
-        return {k: _join(cache[seed], v) for k, v in split.items()}
+        out = {k: _join(cache[seed], v) for k, v in split.items()}
+        if 'train' in out:                                           # training: each layout's first rollouts.episodes
+            keep = out['train']['episode'] < cfg.rollouts.episodes
+            out['train'] = {k: v[keep] for k, v in out['train'].items()}
+        return out
 
     if 'train' in stages:
         start = time.time()
@@ -387,6 +426,15 @@ def main(cfg: DictConfig):
         out = dict(calibration=c, test=result, comparison=comparison, layouts=seeds)
         logger.info('\n' + summary(comparison))
         logger.info('\n' + layout_summary(comparison))
+        if comparison.get('layout_coverage'):
+            logger.info('\n' + guarantee_summary(comparison))
+            log.table('evaluate/over_layouts', ['predictor', 'target', 'reliability', 'power', 'withheld', 'margin_db', 'tau_db',
+                                                'met_on_calibration', 'calibration_below', 'allowed', 'test_layouts_reaching',
+                                                'significantly_below', 'between_std'],
+                      [[n, t, o['reliability'], o['power'], o['withheld'], o['margin_db'], o['tau_db'], o['met_on_calibration'],
+                        o['calibration_below'], o['allowed'], 1 - o['layouts'].get('below', math.nan),
+                        o['layouts'].get('significantly_below'), o['layouts'].get('between_std')]
+                       for n, r in comparison['predictors'].items() for t, o in r.get('layout_targets', {}).items()])
         plot_frontiers(comparison, data / 'evaluation.png')
         images = {'evaluate/frontiers': data / 'evaluation.png'}
         for t in e.targets:
@@ -406,9 +454,9 @@ def main(cfg: DictConfig):
                    for n, r in comparison['predictors'].items() for t, o in r['targets'].items()])
         log.table('evaluate/prediction', ['predictor', 'bias_db', 'spread_db', 'coverage'],
                   [[n, *(r['prediction'][k] for k in ('bias_db', 'spread_db', 'coverage'))] for n, r in comparison['predictors'].items()])
-        log.table('evaluate/per_layout', ['predictor', 'target', 'layout', 'reliability', 'servable'],
-                  [[n, t, k, s['per_layout'][k], s['servable'][k]] for n, r in comparison['predictors'].items()
-                   for t, s in r['layouts'].items() for k in s['per_layout']])
+        log.table('evaluate/per_layout', ['predictor', 'target', 'layout', 'reliability', 'servable', 'low', 'high'],
+                  [[n, t, k, s['per_layout'][k], s['servable'][k], *s.get('interval', {}).get(k, (None, None))]
+                   for n, r in comparison['predictors'].items() for t, s in r['layouts'].items() for k in s['per_layout']])
         log.images(images)
         if e.network:                              # every method as one block of C3-WM's link (c3wm_link), next to the analysis
             layouts = seeds['test'][:e.network_layouts] if e.network_layouts else seeds['test']
@@ -434,8 +482,7 @@ def main(cfg: DictConfig):
                 path = data / f'deployment_{100 * float(t):g}.png'
                 plot_deployment(out['deployment'], float(t), path)
                 images[f'deploy/groups_{100 * float(t):g}'] = path
-            log.table('deploy/methods', ['method', 'target', 'group', 'reliability', 'power', 'withheld', 'layout_p10',
-                                         'layout_min', 'layout_below', 'margin_db', 'tau_db', 'step_db', 'success'],
+            log.table('deploy/methods', ['method', 'target', 'group', *DEPLOY_METRICS, 'margin_db', 'tau_db', 'step_db', 'success'],
                       [[n, t, g, *(o['groups'][g].get(k) for k in DEPLOY_METRICS), o['margin_db'], o['tau_db'],
                         o.get('step_db'), o.get('success')]
                        for n, r in out['deployment']['methods'].items() for t, o in r['targets'].items() for g in o['groups']])
@@ -481,6 +528,9 @@ def main(cfg: DictConfig):
                                   per_run=[[list(r) for r in rows] for rows in runs])
         logger.info(f"over {mc.runs} runs (fit, calibration and test layouts drawn again: {mc.resplit}), mean ± std:\n"
                     + mc_summary(agg, [float(t) for t in e.targets]))
+        if cfg.calibration.layouts.coverage:
+            logger.info(f"κ and τ over layouts (for {cfg.calibration.layouts.coverage} of them), over {mc.runs} runs:\n"
+                        + guarantee_mc_summary(agg, [float(t) for t in e.targets]))
         log.table('monte_carlo/summary', ['predictor', 'target', 'metric', 'mean', 'std', 'ci95', 'min', 'max', 'runs'],
                   [list(r) for r in agg])
         log.table('monte_carlo/runs', ['run', 'predictor', 'target', 'metric', 'value'],

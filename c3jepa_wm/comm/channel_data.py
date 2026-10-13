@@ -265,10 +265,12 @@ def collect_trajectories(
     policy: dict | None = None, # `MixedPolicy`'s behaviour -> probability; None: 0.2 random, 0.5 epsilon_expert, 0.3 waypoint
     epsilon: float = 0.3, # The random actions of `epsilon_expert`
     seed: int = 0, # Seed of the starts and the actions
-    overwrite: bool = False, # Collect again the layouts already in `out_dir`
+    overwrite: bool = False, # Collect again the layouts already in `out_dir` (one with fewer episodes is, always)
     edits: dict | None = None, # The edited layouts among `seeds` (`reset_layout`)
 ) -> list[Path]:
-    "Every agent's cell and heading at every step of `episodes` episodes in the layout of each seed."
+    """Every agent's cell and heading at every step of `episodes` episodes in the layout of each seed. A layout's
+    episodes come from its own seeded generator, one after the other: collected again with more episodes, its first
+    ones are the same."""
     from stable_marl.envs.multigrid.expert import MixedPolicy
     weights = _plain(policy) if policy is not None else None
     out_dir = Path(out_dir)
@@ -277,7 +279,7 @@ def collect_trajectories(
     for layout in seeds:
         path = out_dir / f'trajectories_{layout}.npz'
         paths.append(path)
-        if path.exists() and not overwrite:
+        if path.exists() and not overwrite and len(np.load(path)['cells']) >= episodes:
             continue
         rng = np.random.default_rng([seed, int(layout)])
         agents_policy = MixedPolicy(weights, epsilon, seed=int(rng.integers(2 ** 63)))

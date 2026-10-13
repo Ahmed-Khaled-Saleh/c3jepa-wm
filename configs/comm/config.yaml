@@ -35,7 +35,10 @@ tracing:                       # Sionna RT
   overwrite: false             # full: trace again the layouts already traced (pairs are only ever added)
 
 rollouts:                      # the movement in the data should be the movement at deployment
-  episodes: 5                  # per layout, each from its own goal and starts (FindGoal's spawn rule)
+  episodes: 5                  # per layout for training (its first ones), each from its own goal and starts (FindGoal's spawn rule)
+  eval_episodes: 40            # collected per layout (every one: the Monte Carlo moves layouts between splits); calibration and
+                               # test use them all, so each layout's reliability is measured well (a layout collected with fewer
+                               # is collected again, its first episodes the same)
   max_steps: ${env.max_steps}
   policy: {random: 0.2, epsilon_expert: 0.5, waypoint: 0.3}   # stable-marl's MixedPolicy: an episode's behaviour
   epsilon: 0.3                 # random actions of epsilon_expert
@@ -61,6 +64,11 @@ calibration:
   target: 0.95                 # 1 - ε of the saved power control: share of the servable transmissions reaching Γ
   slack: 0.005                 # calibrate for target + slack (the choice lands within about that on new layouts)
   taus_db: [0.0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, .inf]   # withhold when ρ̂ > τ ρ_max; .inf: never
+  layouts:                     # also κ and τ chosen for each layout to reach the target, not their transmissions pooled
+    coverage: 0.9              # share of new layouts that should (1 - δ): at most m of the n calibration layouts may miss,
+                               # (m + 1) / (n + 1) ≤ 1 - coverage (null: off)
+    confidence: null           # with this probability over the calibration layouts (binomial, stricter); null: in expectation
+    min_servable: 20           # layouts with fewer servable transmissions are left out
 
 evaluation:                    # on the test layouts (c3jepa_wm.comm.evaluation)
   targets: [0.9, 0.95, 0.99]   # operating points: κ and τ chosen on the calibration layouts for each
@@ -82,7 +90,7 @@ deployment:                    # layouts grouped by their distance to the traini
   per_group: 30
   pool: [1000, 20000]          # reset seeds of the new layouts (outside `layouts`)
   first_id: 1000000            # the edited layouts' ids
-  episodes: 10                 # per deployment layout: the first `pilot` for the per-layout calibration, the rest judged
+  episodes: 40                 # per deployment layout: the first `pilot` for the per-layout calibration, the rest judged
   pilot: 2
   seed: 0                      # of the edits
   overwrite: false             # choose the layouts again (then collect and trace them again: rollouts.overwrite, a new data_dir)

@@ -14,14 +14,15 @@ from pathlib import Path
 import numpy as np
 
 from .channel_data import ChannelTable, db, episode_fading, table_path
-from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link, calibrate, evaluate, fit_predictor,
-                                          outcome, predict_gain)
+from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link, calibrate, calibrate_layouts,
+                                          evaluate, fit_predictor, outcome, predict_gain)
 
 # %% auto #0
 __all__ = ['LEARNED', 'past_gains', 'fit_baselines', 'baselines', 'prediction_errors', 'operating_points', 'frontier',
-           'layout_spread', 'layout_summary', 'plot_layout_spread', 'transmissions', 'received', 'TableFading',
-           'network_methods', 'network_metrics', 'run_network', 'analysis', 'compare_network', 'network_summary',
-           'estimates', 'snr_sweep', 'evaluate_power_control', 'summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
+           'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread', 'transmissions', 'received',
+           'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis', 'compare_network',
+           'network_summary', 'estimates', 'snr_sweep', 'evaluate_power_control', 'summary', 'guarantee_summary',
+           'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -75,11 +76,31 @@ def frontier(estimate: np.ndarray, gain: np.ndarray, g_min: float, taus_db=(0.0,
     return points[:, 0], np.maximum.accumulate(points[:, 1])
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #b8d4f0c3
+def layout_intervals(reached, servable, layout, episode, confidence: float = 0.95, boots: int = 1000, seed: int = 0) -> dict:
+    """Layout -> (low, high, standard error) of its reliability (the share of its servable transmissions `reached`),
+    by the bootstrap over its episodes (resampled whole: within one, transmissions are correlated)."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for k in np.unique(layout):
+        on = (layout == k) & servable
+        if not on.any():
+            continue
+        eps, idx = np.unique(episode[on], return_inverse=True)
+        r = np.bincount(idx, weights=reached[on].astype(float), minlength=len(eps))
+        n = np.bincount(idx, minlength=len(eps)).astype(float)
+        draw = rng.integers(len(eps), size=(boots, len(eps)))
+        ratio = r[draw].sum(1) / np.maximum(n[draw].sum(1), 1)
+        a = (1 - confidence) / 2
+        out[int(k)] = (float(np.quantile(ratio, a)), float(np.quantile(ratio, 1 - a)), float(ratio.std()))
+    return out
+
 def layout_spread(estimate, gain, layout, g_min: float, margin_db: float, tau_db: float, target: float | None = None,
-                  min_servable: int = 20) -> dict:
+                  min_servable: int = 20, episode=None, confidence: float = 0.95) -> dict:
     """The reliability in each layout (`per_layout`: layout -> share of its servable transmissions reaching Γ, `servable`:
     their numbers) at one margin and threshold, and its spread over the layouts with at least `min_servable` (mean, std,
-    min, 10th percentile, median; with `target`, the share of layouts below it, and the worst shortfall)."""
+    min, 10th percentile, median; with `target`, the share of layouts below it, and the worst shortfall). With each
+    transmission's `episode`: each layout's `interval` (`layout_intervals`), the spread between layouts without the
+    sampling noise (`between_std`), and with `target`, the share of layouts `significantly_below` it."""
     layout = np.asarray(layout)
     per, count = {}, {}
     for k in np.unique(layout):
@@ -95,6 +116,16 @@ def layout_spread(estimate, gain, layout, g_min: float, margin_db: float, tau_db
                    median=float(np.median(r)))
         if target is not None:
             out.update(below=float((r < target).mean()), shortfall=float(max(target - r.min(), 0.0)))
+        if episode is not None:
+            power, sent = transmissions(estimate, g_min, margin_db, tau_db)
+            servable = gain >= g_min
+            iv = layout_intervals(sent & (power >= (1 / gain) * (1 - 1e-9)), servable, layout, np.asarray(episode), confidence)
+            keep = [k for k in per if count[k] >= min_servable]
+            se = np.array([iv[k][2] for k in keep])
+            out.update(interval={k: iv[k][:2] for k in keep},
+                       between_std=float(math.sqrt(max(r.var() - (se ** 2).mean(), 0.0))))
+            if target is not None:
+                out['significantly_below'] = float(np.mean([iv[k][1] < target for k in keep]))
     return out
 
 def layout_summary(results: dict) -> str:
@@ -104,15 +135,17 @@ def layout_summary(results: dict) -> str:
     w = max(map(len, names)) + 2
     lines = [f"reliability per test layout, κ and τ chosen on the calibration layouts "
              f"({results['predictors'][names[0]]['layouts'][targets[0]]['layouts']} layouts)",
-             f"{'':{w}s}" + ''.join(f"{f'{100 * t:g}%: pooled / mean ± std / p10 / min / below':>50s}" for t in targets)]
+             f"{'':{w}s}" + ''.join(f"{f'{100 * t:g}%: pooled / mean ± std (between) / p10 / min / below (significantly)':>72s}"
+                                    for t in targets)]
     for name in names:
         row = f"{name:{w}s}"
         for t in targets:
             s, pooled = results['predictors'][name]['layouts'][t], results['predictors'][name]['targets'][t]['reliability']
-            row += (f"{100 * pooled:13.1f}% {100 * s['mean']:6.1f} ± {100 * s['std']:4.1f} {100 * s['p10']:6.1f} "
-                    f"{100 * s['min']:6.1f} {100 * s['below']:6.0f}%  ")
+            row += (f"{100 * pooled:22.1f}% {100 * s['mean']:6.1f} ± {100 * s['std']:4.1f} ({100 * s.get('between_std', math.nan):4.1f})"
+                    f" {100 * s['p10']:6.1f} {100 * s['min']:6.1f} {100 * s['below']:5.0f}% ({100 * s.get('significantly_below', math.nan):3.0f}%)  ")
         lines.append(row)
-    lines.append('below: the share of the test layouts under the target')
+    lines.append('below: the share of the test layouts under the target (significantly: their interval over episodes entirely under it); '
+                 'between: the std between layouts without the sampling noise')
     return '\n'.join(lines)
 
 def plot_layout_spread(results: dict, target: float, path=None, ax=None):
@@ -394,8 +427,13 @@ def evaluate_power_control(
     compare: bool = True, # Also the baselines (perfect CSI always)
     snr_targets_db=(), # Also `snr_sweep` at these Γ (in 'snr')
     fitted: dict | None = None, # `fit_baselines`' result (None: fit here)
+    layout_coverage: float | None = None, # Also κ and τ chosen over layouts (`calibrate_layouts`), for this share of layouts
+    layout_confidence: float | None = None, # ... with this probability over the calibration layouts (None: in expectation)
+    min_servable: int = 20, # Layouts with fewer servable transmissions: left out of the per-layout figures
 ) -> dict:
-    "Prediction errors, operating points, frontiers and what the agents receive, for the learned predictor and the baselines."
+    """Prediction errors, operating points, frontiers and what the agents receive, for the learned predictor and the
+    baselines; with `layout_coverage`, also each one's operating points with κ and τ chosen over layouts
+    (`layout_targets`)."""
     budget = saved['budget']
     estimated = estimates(saved, data, compare, quantile, max_iter, fitted)
     test_gain = data['test']['gain']
@@ -406,9 +444,25 @@ def evaluate_power_control(
                for name, (c, t) in estimated.items()}
     for name, (c, t) in estimated.items():                         # the reliability per test layout, at the same κ and τ
         results[name]['layouts'] = {target: layout_spread(t, test_gain, data['test']['layout'], budget.g_min, p['margin_db'],
-                                                          p['tau_db'], target)
+                                                          p['tau_db'], target, min_servable, data['test'].get('episode'))
                                     for target, p in results[name]['targets'].items()}
-    out = dict(servable=float((test_gain >= budget.g_min).mean()), transmissions=len(test_gain), predictors=results)
+    if layout_coverage is not None:                                # κ and τ for each layout to reach the target, not their pool
+        cal = data['calibration']
+        for name, (c, t) in estimated.items():
+            if name == 'perfect CSI':
+                continue
+            results[name]['layout_targets'] = {}
+            for target in targets:
+                ch = calibrate_layouts(c, cal['gain'], cal['layout'], budget.g_min, target, layout_coverage, layout_confidence,
+                                       taus_db=taus_db, min_servable=min_servable)
+                results[name]['layout_targets'][target] = dict(
+                    evaluate(t, test_gain, budget.g_min, ch['margin_db'], ch['tau_db']), margin_db=ch['margin_db'],
+                    tau_db=ch['tau_db'], met_on_calibration=ch['met'], calibration_below=ch['below'], allowed=ch['allowed'],
+                    calibration_layouts=ch['layouts'],
+                    layouts=layout_spread(t, test_gain, data['test']['layout'], budget.g_min, ch['margin_db'], ch['tau_db'],
+                                          target, min_servable, data['test'].get('episode')))
+    out = dict(servable=float((test_gain >= budget.g_min).mean()), transmissions=len(test_gain), predictors=results,
+               layout_coverage=layout_coverage, layout_confidence=layout_confidence)
     if len(snr_targets_db):
         out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token)
     return out
@@ -430,6 +484,30 @@ def summary(results: dict) -> str:
             row += f"{100 * o['reliability']:13.1f}% {o['power']:6.1f}× {100 * o['error_free']:6.1f}%{flag}  "
         lines.append(row)
     lines.append('✗: no margin and threshold reach the target on the calibration layouts (the most reliable is used)')
+    return '\n'.join(lines)
+
+def guarantee_summary(results: dict) -> str:
+    """A text table: per predictor and target, κ and τ chosen over the transmissions pooled and over layouts: the
+    reliability (pooled), the power, and the share of test layouts reaching the target (and significantly below it)."""
+    names = [n for n, r in results['predictors'].items() if 'layout_targets' in r]
+    if not names:
+        return ''
+    targets = list(results['predictors'][names[0]]['layout_targets'])
+    w = max(map(len, names)) + 2
+    cov, conf = results['layout_coverage'], results['layout_confidence']
+    lines = [f"κ and τ chosen pooled, and over layouts for {100 * cov:g}% of them"
+             + (f" with {100 * conf:g}% confidence" if conf else " (in expectation)")
+             + ": reached (pooled) / power / test layouts reaching the target / significantly below",
+             f"{'':{w}s}" + ''.join(f"{f'{100 * t:g}%  pooled':>36s}{'over layouts':>36s}" for t in targets)]
+    for name in names:
+        r, row = results['predictors'][name], f"{name:{w}s}"
+        for t in targets:
+            for o, s in ((r['targets'][t], r['layouts'][t]), (r['layout_targets'][t], r['layout_targets'][t]['layouts'])):
+                flag = ' ' if o['met_on_calibration'] else '✗'
+                row += (f"{100 * o['reliability']:13.1f}% {o['power']:6.2f}× {100 * (1 - s.get('below', math.nan)):5.0f}% "
+                        f"{100 * s.get('significantly_below', math.nan):5.0f}%{flag}")
+        lines.append(row)
+    lines.append('✗: not met on the calibration layouts (over layouts: more of them miss than allowed, at any κ and τ)')
     return '\n'.join(lines)
 
 def plot_frontiers(results: dict, path=None, ax=None):

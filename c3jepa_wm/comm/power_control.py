@@ -19,7 +19,8 @@ from .channel_data import DIRS, db, features
 
 # %% auto #0
 __all__ = ['MARGINS_DB', 'TAUS_DB', 'OOV', 'Budget', 'fit_predictor', 'predict_gain', 'outcome', 'calibrate', 'evaluate',
-           'save_power_control', 'load_power_control', 'LearnedChannelInversion', 'Schedule', 'Tokens', 'c3wm_link']
+           'layouts_allowed_below', 'layout_outcome', 'calibrate_layouts', 'save_power_control', 'load_power_control',
+           'LearnedChannelInversion', 'Schedule', 'Tokens', 'c3wm_link']
 
 # %% ../../nbs/09b_comm.power_control.ipynb #46629e8a
 @dataclass
@@ -97,6 +98,72 @@ def evaluate(estimate, gain, g_min: float, margin_db: float, tau_db: float) -> d
     o = outcome(estimate, gain, g_min, tau_db, [margin_db])
     return dict(reliability=float(o['reliability'][0]), power=float(o['power'][0]), withheld=float(o['withheld'][0]),
                 servable=float((gain >= g_min).mean()))
+
+# %% ../../nbs/09b_comm.power_control.ipynb #9c1a2b3d
+def layouts_allowed_below(n: int, coverage: float, confidence: float | None = None) -> int:
+    """The number `m` of the `n` calibration layouts that may miss the target for a new layout to reach it with
+    probability ≥ `coverage`: in expectation over the calibration layouts ((m + 1) / (n + 1) ≤ 1 - coverage), or with
+    probability ≥ `confidence` over them (P(Binomial(n, 1 - coverage) ≤ m) ≤ 1 - confidence). -1: not even 0 will do."""
+    if confidence is None:
+        return int(math.floor((1 - coverage) * (n + 1) + 1e-9)) - 1
+    from scipy.stats import binom
+    m = -1
+    while m + 1 < n and binom.cdf(m + 1, n, 1 - coverage) <= 1 - confidence:
+        m += 1
+    return m
+
+def layout_outcome(estimate, gain, layout, g_min: float, tau_db: float = math.inf, margins_db=MARGINS_DB,
+                   block: int = 20000) -> dict:
+    """For each margin, as `outcome`, and per layout (`layouts`: the layouts, `per_layout`: (margins, layouts) shares
+    of their servable transmissions reaching Γ, `servable`: their numbers); in blocks of transmissions."""
+    margins_db = np.atleast_1d(np.asarray(margins_db, float))
+    layouts, column = np.unique(layout, return_inverse=True)
+    reached = np.zeros((len(margins_db), len(layouts)))
+    power, sent_n = np.zeros(len(margins_db)), np.zeros(len(margins_db))
+    servable_all = gain >= g_min
+    for s in range(0, len(gain), block):
+        e, g = np.maximum(estimate[s:s + block], 1e-30), gain[s:s + block]
+        rho = 10 ** (margins_db[:, None] / 10) / e[None, :]
+        sent = rho <= 10 ** (tau_db / 10) / g_min if math.isfinite(tau_db) else np.ones_like(rho, bool)
+        p = np.where(sent, np.minimum(rho, 1 / g_min), 0)
+        ok = (sent & (p >= (1 / g) * (1 - 1e-9))) & servable_all[s:s + block]
+        onehot = np.zeros((len(g), len(layouts)), np.float32)
+        onehot[np.arange(len(g)), column[s:s + block]] = 1
+        reached += ok.astype(np.float32) @ onehot
+        power += p.sum(1)
+        sent_n += sent.sum(1)
+    servable = np.bincount(column, weights=servable_all, minlength=len(layouts))
+    need = np.where(servable_all, 1 / gain, 0).mean()
+    return dict(reliability=reached.sum(1) / max(servable_all.sum(), 1), power=power / len(gain) / need,
+                withheld=1 - sent_n / len(gain), layouts=layouts, servable=servable,
+                per_layout=reached / np.maximum(servable, 1))
+
+def calibrate_layouts(
+    estimate, gain, layout, # ĝ, |h|² and layout of each calibration transmission
+    g_min: float, target: float, # The weakest servable gain, and the reliability each layout should reach
+    coverage: float = 0.9, # Share of new layouts that should reach it (1 - δ)
+    confidence: float | None = None, # With this probability over the calibration layouts (None: in expectation)
+    margins_db=MARGINS_DB, taus_db=TAUS_DB, # Tried
+    min_servable: int = 20, # Layouts with fewer servable transmissions are left out
+) -> dict:
+    """The margin `κ` and threshold `τ` (dB) with the least power with which at most `allowed` of the calibration
+    layouts miss `target` (`met`); if none, the pair with the fewest missing (then the least power)."""
+    best = None
+    for tau in taus_db:
+        o = layout_outcome(estimate, gain, layout, g_min, tau, margins_db)
+        keep = o['servable'] >= min_servable
+        n = int(keep.sum())
+        allowed = layouts_allowed_below(n, coverage, confidence)
+        below = (o['per_layout'][:, keep] < target - 1e-12).sum(1)
+        for k, margin in enumerate(np.atleast_1d(margins_db)):
+            met = bool(allowed >= 0 and below[k] <= allowed)
+            key = (met, -o['power'][k]) if met else (False, -below[k], -o['power'][k])
+            if best is None or key > best[0]:
+                best = (key, dict(margin_db=float(margin), tau_db=float(tau), met=met, below=int(below[k]),
+                                  allowed=int(allowed), layouts=n, reliability=float(o['reliability'][k]),
+                                  power=float(o['power'][k]), withheld=float(o['withheld'][k]),
+                                  worst=float(o['per_layout'][k, keep].min()) if n else math.nan))
+    return best[1]
 
 # %% ../../nbs/09b_comm.power_control.ipynb #c189aeab
 def save_power_control(path, model, history: int, calibration: dict, budget: Budget, **info):

@@ -15,11 +15,11 @@ from pathlib import Path
 import numpy as np
 
 from .channel_data import interior_walls, layout_edits, make_env, nearest_layout, reset_layout
-from .evaluation import LEARNED, baselines, prediction_errors, transmissions
-from .power_control import MARGINS_DB, TAUS_DB, calibrate, predict_gain
+from .evaluation import LEARNED, baselines, layout_intervals, prediction_errors, transmissions
+from .power_control import MARGINS_DB, TAUS_DB, calibrate, calibrate_layouts, predict_gain
 
 # %% auto #0
-__all__ = ['GROUPS', 'EDITED', 'PER_LAYOUT', 'ONLINE', 'deployment_layouts', 'layout_edits_of', 'save_deployment',
+__all__ = ['GROUPS', 'EDITED', 'PER_LAYOUT', 'ONLINE', 'OVER_LAYOUTS', 'deployment_layouts', 'layout_edits_of', 'save_deployment',
            'load_deployment', 'deployment_summary', 'sequences', 'margin_for', 'per_layout_margins', 'online_margins',
            'judge', 'choose_online', 'evaluate_deployment', 'deployment_table', 'plot_deployment']
 
@@ -211,10 +211,11 @@ def _sent_with(estimate, g_min: float, margin_db, tau_db: float, schedule_db: fl
     return power, sent
 
 # %% ../../nbs/09d_comm.deployment.ipynb #d2a1b2c5
-def judge(power, sent, gain, layout, g_min: float, target: float | None = None, min_servable: int = 20) -> dict:
+def judge(power, sent, gain, layout, g_min: float, target: float | None = None, min_servable: int = 20, episode=None) -> dict:
     """The share of the servable transmissions reaching Γ (`reliability`), the power (× perfect CSI's), the share
     withheld, and the reliability per layout (over the layouts with at least `min_servable`): mean, std, 10th
-    percentile, min, and with `target` the share of the layouts below it."""
+    percentile, min, and with `target` the share of the layouts below it; with each transmission's `episode`, also
+    the share significantly below it and the std between layouts without the sampling noise (`layout_intervals`)."""
     servable, need = gain >= g_min, 1 / np.maximum(gain, 1e-300)
     reached = sent & (power >= need * (1 - 1e-9))
     out = dict(reliability=float(reached[servable].mean()) if servable.any() else math.nan,
@@ -228,6 +229,13 @@ def judge(power, sent, gain, layout, g_min: float, target: float | None = None, 
                    layout_min=float(per.min()))
         if target is not None:
             out['layout_below'] = float((per < target).mean())
+        if episode is not None:
+            keep = [int(k) for k in np.unique(layout) if ((layout == k) & servable).sum() >= min_servable]
+            iv = layout_intervals(reached, servable, layout, np.asarray(episode))
+            se = np.array([iv[k][2] for k in keep])
+            out['layout_between_std'] = float(math.sqrt(max(per.var() - (se ** 2).mean(), 0.0)))
+            if target is not None:
+                out['layout_significantly_below'] = float(np.mean([iv[k][1] < target for k in keep]))
     return out
 
 def choose_online(
@@ -256,7 +264,7 @@ def choose_online(
     return best[1]
 
 # %% ../../nbs/09d_comm.deployment.ipynb #d3a1b2c4
-PER_LAYOUT, ONLINE = ' + per-layout κ', ' + online κ'
+PER_LAYOUT, ONLINE, OVER_LAYOUTS = ' + per-layout κ', ' + online κ', ' + κ, τ over layouts'
 
 def evaluate_deployment(
     saved: dict, # `load_power_control`'s result
@@ -274,6 +282,8 @@ def evaluate_deployment(
     failure_scales=(1.0, 0.75, 0.5, 0.25), # Online: p tried, 1 - (1 - target) × each
     bounds_db=(-10.0, 30.0), # Online: κ within the offline κ + these
     quantile: float = 0.05, max_iter: int = 400, # Of the baselines, if fit here
+    layout_coverage: float | None = None, # Also κ and τ chosen over the calibration layouts (`calibrate_layouts`), for this share
+    layout_confidence: float | None = None, # ... with this probability over the calibration layouts (None: in expectation)
 ) -> dict:
     """`groups`: per group its layouts, distance, edits and walls; `methods`: per method its predictor's errors per
     group, and per target its parameters and `judge`'s metrics per group (and `all`)."""
@@ -291,7 +301,8 @@ def evaluate_deployment(
                methods={})
 
     def metrics(power, sent, target):
-        return {g: judge(power[m], sent[m], dep['gain'][m], dep['layout'][m], g_min, target) for g, m in member.items()}
+        return {g: judge(power[m], sent[m], dep['gain'][m], dep['layout'][m], g_min, target, episode=dep['episode'][m])
+                for g, m in member.items()}
 
     for name, predict in predictors.items():
         c_est, d_est = predict(cal), predict(dep)
@@ -299,6 +310,8 @@ def evaluate_deployment(
         kinds = {name: {}}
         if name in adapt and name != 'perfect CSI':
             kinds[name + PER_LAYOUT], kinds[name + ONLINE] = {}, {}
+            if layout_coverage is not None:
+                kinds[name + OVER_LAYOUTS] = {}
         for target in targets:
             if name == 'perfect CSI':
                 offline = dict(margin_db=0.0, tau_db=0.0, met=True)
@@ -326,6 +339,13 @@ def evaluate_deployment(
                                                     success=chosen['success'], met_on_calibration=chosen['met'],
                                                     final_margin_mean_db=float(np.nanmean([margin[i[i >= 0][-1]] for i in index])),
                                                     groups=metrics(power, sent, target))
+            if name + OVER_LAYOUTS in kinds:
+                ch = calibrate_layouts(c_est, cal['gain'], cal['layout'], g_min, target, layout_coverage, layout_confidence,
+                                       taus_db=taus_db)
+                power, sent = transmissions(d_est, g_min, ch['margin_db'], ch['tau_db'])
+                kinds[name + OVER_LAYOUTS][target] = dict(margin_db=ch['margin_db'], tau_db=ch['tau_db'], met_on_calibration=ch['met'],
+                                                          calibration_below=ch['below'], allowed=ch['allowed'],
+                                                          groups=metrics(power, sent, target))
         for method, per_target in kinds.items():
             out['methods'][method] = dict(predictor=name, prediction=errors, targets=per_target)
     return out
