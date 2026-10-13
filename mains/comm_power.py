@@ -62,7 +62,7 @@ class Log:
 
     def table(self, key: str, columns: list, rows: list):
         if self.run and rows:
-            self.run.log({key: self.wandb.Table(columns=columns, data=[[_plain(v) for v in r] for r in rows])})
+            self.run.log({key: self.wandb.Table(columns=columns, data=_columns_typed(rows))})
 
     def images(self, paths: dict):
         if self.run:
@@ -86,6 +86,17 @@ def _plain(v):
     if isinstance(v, (np.floating, np.integer, np.bool_)):
         v = v.item()
     return str(v) if isinstance(v, float) and not math.isfinite(v) else v
+
+
+def _columns_typed(rows: list) -> list:
+    "The rows as plain values, a column of numbers and strings (e.g. τ, with inf) as strings: wandb's one type per column."
+    rows = [[_plain(v) for v in r] for r in rows]
+    for j in range(len(rows[0])):
+        kinds = {isinstance(r[j], str) for r in rows if r[j] is not None}
+        if len(kinds) > 1:
+            for r in rows:
+                r[j] = None if r[j] is None else str(r[j])
+    return rows
 
 
 # --------------------------------------------------------------------------------------------- the device
