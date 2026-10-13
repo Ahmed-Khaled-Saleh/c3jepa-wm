@@ -1,0 +1,10 @@
+# configs/comm/env/findgoal.yaml: stable-marl's FindGoal, as the agents run in it (Hydra-instantiable).
+# A layout is decided by the reset seed: the seeds in `layouts` (config.yaml) name the layouts.
+# All of FindGoalEnv's arguments: stable_marl/configs/env/findgoal.yaml
+_target_: stable_marl.envs.multigrid.FindGoalEnv
+agents: 2
+size: 15                 # the grid is size × size, outer wall included
+num_obstacles: 6         # rectangular wall blocks (2-4 × 1-2 cells)
+n_clutter: 10            # single wall cells
+max_steps: 150
+variations: []           # factors every reset draws from its seed, e.g. [obstacles.number, clutter.number] (0-12, 0-20); []: the numbers above
