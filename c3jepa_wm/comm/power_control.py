@@ -180,7 +180,7 @@ def load_power_control(path) -> dict:
     return saved
 
 # %% ../../nbs/09b_comm.power_control.ipynb #ae63ef44
-from comm_core import BPSK, Airtime, BitLevelLink, Block, IndexCodec, PowerControl, SINR
+from comm_core import BPSK, Airtime, Block, IndexCodec, PowerControl, UncodedChain
 
 class LearnedChannelInversion(PowerControl):
     "Eq. 26 with the gain from `model` (features -> dB): the lowest prediction over the receiver's possible cells."
@@ -283,6 +283,6 @@ def c3wm_link(
     bits_per_token: int = 8, # log₂ K: a codebook of 2**bits_per_token tokens
     crc: bool = False, # Drop the messages with bit errors (they arrive as OOV), instead of delivering them
 ) -> list:
-    "C3-WM's link as comm-core blocks, for a `PipelineBackend`: fading, power, scheduling, SNR, bits, tokens, airtime."
-    return [fading, power_control, Schedule(max_power, tau_db), SINR(),
-            BitLevelLink(IndexCodec(2 ** bits_per_token), BPSK(), drop_corrupted=crc), Tokens(), Airtime()]
+    "C3-WM's link as comm-core blocks, for a `PipelineBackend`: fading, power, scheduling, bits, tokens, airtime."
+    return [fading, power_control, Schedule(max_power, tau_db),
+            UncodedChain(IndexCodec(2 ** bits_per_token), BPSK(), drop_corrupted=crc), Tokens(), Airtime()]
