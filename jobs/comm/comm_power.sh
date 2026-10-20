@@ -21,6 +21,9 @@
 #   sbatch comm_power.sh                                         # every stage, the config's 260 layouts
 #   STAGE=trace sbatch comm_power.sh                             # one stage
 #   EXTRA="monte_carlo.runs=20 link.fading=rayleigh" STAGE=evaluate sbatch comm_power.sh
+#   EXTRA="predictor.kind=lstm predictor.steps=true" sbatch comm_power.sh                # the saved predictor: a per-step LSTM
+#   EXTRA="link.history=16 link.history_data=32" sbatch comm_power.sh                    # 16 past gains, the same transmissions as 32
+#                                                                # (train and evaluate again; collect and trace: skipped, done)
 #   EXTRA="layouts.train=[0,1] layouts.calibration=[1,1] layouts.test=[1,1]" STAGE=trace sbatch --time=1:00:00 comm_power.sh
 #                                                                # time one layout's tracing first
 # Tracing as an array instead (then STAGE=train and STAGE=evaluate once, after all of it):

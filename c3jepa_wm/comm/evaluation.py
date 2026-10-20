@@ -15,7 +15,8 @@ import numpy as np
 
 from .channel_data import ChannelTable, db, episode_fading, table_path
 from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link, calibrate, calibrate_layouts,
-                                          evaluate, fit_predictor, outcome, predict_gain)
+                                          evaluate, fit_predictor, outcome, predict_gain, predict_on)
+from .sequence import fit_model, predictor_name
 
 # %% auto #0
 __all__ = ['LEARNED', 'past_gains', 'fit_baselines', 'baselines', 'prediction_errors', 'operating_points', 'frontier',
@@ -31,25 +32,31 @@ def past_gains(data: dict, history: int) -> np.ndarray:
     "The past gains |h|² of each sample (most recent first), from its features."
     return 10 ** (data['X'][:, 3:3 + history] / 10)
 
-def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400) -> dict:
+def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, extra=()) -> dict:
     """The baselines' models, fit on `train`: C3-WM's `Ψ` (linear in |h|², eq. 24: `psi`), the same fit in dB (`psi_db`),
     a quantile model of the history alone, the past gains and the moves (`history_model`), and the learned model's
-    features (geometry + history) fit for the mean gain in dB (`mean_model`)."""
+    features (geometry + history) fit for the mean gain in dB (`mean_model`); and the predictors of `extra`
+    (`extra`: name -> model), each a dict of `comm.sequence.fit_model`'s options (kind, quantile, steps, trees,
+    sequence), named by `predictor_name`."""
     from comm_core import fit_gain_predictor
     sequences = [np.r_[p[::-1], g] for p, g in zip(past_gains(train, history), train['gain'])]
     return dict(psi=fit_gain_predictor(sequences, history=history),
                 psi_db=fit_gain_predictor(sequences, history=history, domain='db'),
                 history_model=fit_predictor(train['X'][:, 3:], train['gain'], quantile, max_iter),
-                mean_model=fit_predictor(train['X'], train['gain'], None, max_iter))
+                mean_model=fit_predictor(train['X'], train['gain'], None, max_iter),
+                extra={predictor_name(s.get('kind', 'trees'), s.get('quantile', 0.05), s.get('steps', False)): fit_model(train, **s)
+                       for s in extra})
 
 def baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, fitted: dict | None = None) -> dict:
-    "name -> predict(dataset) -> ĝ: C3-WM's predictor (in |h|², and in dB), a history-only quantile model, the geometry + history mean, and perfect CSI; fit on `train` (or `fitted`)."
+    """name -> predict(dataset) -> ĝ: C3-WM's predictor (in |h|², and in dB), a history-only quantile model, the
+    geometry + history mean, the `extra` predictors of `fitted`, and perfect CSI; fit on `train` (or `fitted`)."""
     f = fitted if fitted is not None else fit_baselines(train, history, quantile, max_iter)
     return {
         "C3-WM's (linear in |h|²)": lambda d: np.array([max(f['psi'](p), 0.0) for p in past_gains(d, history)]),
         "C3-WM's, in dB": lambda d: np.array([f['psi_db'](p) for p in past_gains(d, history)]),
         'history quantile': lambda d: 10 ** (f['history_model'].predict(d['X'][:, 3:]) / 10),
-        'geometry + history mean': lambda d: predict_gain(f['mean_model'], d['X_possible'], d['possible_mask']),
+        'geometry + history mean': lambda d: predict_on(f['mean_model'], d),
+        **{name: (lambda d, m=m: predict_on(m, d)) for name, m in f.get('extra', {}).items()},
         'perfect CSI': lambda d: d['gain'].copy(),
     }
 
@@ -229,7 +236,8 @@ def network_methods(
               "C3-WM's (linear in |h|²)": lambda m: predicted(fitted['psi'], m),
               "C3-WM's, in dB": lambda m: predicted(fitted['psi_db'], m),
               'history quantile': lambda m: learned(fitted['history_model'], m, geometry=False),
-              'geometry + history mean': lambda m: learned(fitted['mean_model'], m)}
+              'geometry + history mean': lambda m: learned(fitted['mean_model'], m),
+              **{name: (lambda m, model=model: learned(model, m)) for name, model in fitted.get('extra', {}).items()}}
     method = lambda make, margin, tau, predictor, crc=False: dict(make=make, margin_db=float(margin), tau_db=float(tau),
                                                                   crc=crc, predictor=predictor)
     out = {'perfect CSI': method(lambda walls, positions, headings: ChannelInversion(snr), 0.0, 0.0, 'perfect CSI'),
@@ -269,10 +277,12 @@ def run_network(
     message_bits: int = 392, # Per message
     bits_per_token: int = 8, # Per token: a codebook of 2**bits_per_token
     seed: int = 0, # As `build_dataset`'s (the fading's draws)
+    skip: int | None = None, # The steps of each episode not judged (as the data's: the history it was built with); None: the history
 ) -> dict:
-    "`network_metrics` of one method through C3-WM's link as blocks, on the trajectories of `seeds` (after each episode's first `history` steps)."
+    """`network_metrics` of one method through C3-WM's link as blocks, on the trajectories of `seeds` (after each
+    episode's first `skip` steps)."""
     from comm_core import FullMeshTopology, IdealProtocol, Message, Network, Node, PipelineBackend
-    budget, history = saved['budget'], saved['history']
+    budget, history = saved['budget'], saved['history'] if skip is None else skip
     rng = np.random.default_rng([seed, 1])                       # the payloads and the bits: the same for every method
     tokens = message_bits // bits_per_token
     rows, cost = [], []
@@ -330,13 +340,13 @@ def compare_network(
     fitted: dict | None = None, # `fit_baselines`' result (None: fit on `data['train']`)
     quantile: float = 0.05, # Of the history-only baseline, if fit here
     max_iter: int = 400, # Of the history-only baseline, if fit here
-    **network, # `run_network`'s options: fading, fading_correlation, symmetric, message_bits, bits_per_token, seed
+    **network, # `run_network`'s options: fading, fading_correlation, symmetric, message_bits, bits_per_token, seed, skip
 ) -> dict:
     "name -> the method's κ, τ, CRC, and its `network` metrics next to its `analysis` on the same layouts."
     fitted = fitted if fitted is not None else fit_baselines(data['train'], saved['history'], quantile, max_iter)
     methods = network_methods(saved, fitted, comparison, target)
     predict = {**baselines(data['train'], saved['history'], fitted=fitted),
-               LEARNED: lambda d: predict_gain(saved['model'], d['X_possible'], d['possible_mask'])}
+               LEARNED: lambda d: predict_on(saved['model'], d)}
     on = np.isin(data['test']['layout'], list(seeds))
     test = {k: v[on] for k, v in data['test'].items()}
     out = {}
@@ -375,7 +385,7 @@ def estimates(
     fitted: dict | None = None, # `fit_baselines`' result (None: fit here)
 ) -> dict:
     "name -> (ĝ on the calibration layouts, ĝ on the test layouts): the learned predictor, perfect CSI, and the baselines if `compare`."
-    out = {LEARNED: lambda d: predict_gain(saved['model'], d['X_possible'], d['possible_mask'])}
+    out = {LEARNED: lambda d: predict_on(saved['model'], d)}
     if compare:
         out.update(baselines(data['train'], saved['history'], quantile, max_iter, fitted))
     out['perfect CSI'] = lambda d: d['gain'].copy()

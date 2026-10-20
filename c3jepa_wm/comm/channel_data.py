@@ -15,10 +15,11 @@ from pathlib import Path
 import numpy as np
 
 # %% auto #0
-__all__ = ['DIRS', 'make_env', 'free_cells', 'reset_layout', 'reset_in_layout', 'interior_walls', 'layout_edits', 'edit_distance',
-           'layout_distance', 'nearest_layout', 'trace_layouts', 'wall_geometry', 'ChannelTable', 'table_path',
-           'collect_trajectories', 'PairCache', 'visited_pairs', 'trace_visited_pairs', 'CachedRayTracedFading', 'db',
-           'features', 'episode_fading', 'link_samples', 'build_dataset']
+__all__ = ['DIRS', 'STEP_FEATURES', 'make_env', 'free_cells', 'reset_layout', 'reset_in_layout', 'interior_walls', 'layout_edits',
+           'edit_distance', 'layout_distance', 'nearest_layout', 'trace_layouts', 'wall_geometry', 'ChannelTable',
+           'table_path', 'collect_trajectories', 'PairCache', 'visited_pairs', 'trace_visited_pairs',
+           'CachedRayTracedFading', 'db', 'features', 'step_features', 'episode_fading', 'link_samples',
+           'build_dataset', 'with_history']
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #f16dd0ab
 DIRS = [(1, 0), (0, 1), (-1, 0), (0, -1)]       # MultiGrid's headings: right, down, left, up
@@ -480,6 +481,13 @@ def features(walls: np.ndarray, tx, rx, past_gains, tx_moved: bool, rx_moved: bo
     distance, crossed = wall_geometry(walls, tx, rx)
     return [math.log10(max(distance, 0.5)), distance, crossed, *db(past_gains), float(tx_moved), float(rx_moved)]
 
+STEP_FEATURES = 6                                                   # `step_features`' length
+
+def step_features(walls: np.ndarray, tx, rx, gain: float, tx_moved: bool, rx_moved: bool) -> list[float]:
+    "One past step of a link, for the sequence predictors: its gain (dB), the geometry between the two agents then, and whether each had moved."
+    distance, crossed = wall_geometry(walls, tx, rx)
+    return [float(db(gain)), math.log10(max(distance, 0.5)), distance, crossed, float(tx_moved), float(rx_moved)]
+
 # %% ../../nbs/09a_comm.channel_data.ipynb #f8f7219d
 def _fading(cells: np.ndarray, rng: np.random.Generator, rho: float) -> np.ndarray:
     "|g_t|² of one pair of agents' Rayleigh fading over an episode's steps (cells: (T, 2, 2))."
@@ -507,13 +515,15 @@ def link_samples(
     fading: str | None = None, # None, or 'rayleigh' on top of the table
     fading_correlation: float = 0.95, # Of the fading between steps while both agents stand still
     rng: np.random.Generator | None = None, # The fading's randomness
+    steps: bool = False, # Also `S`: each past step's `step_features` (most recent first), for the per-step sequence predictors
 ) -> dict:
-    "Per directed link and step: the features (to the receiver's actual cell, and to each of its possible cells) and the gain."
+    """Per directed link and step: the features (to the receiver's actual cell, and to each of its possible cells) and the
+    gain; with `steps`, also the past steps' gains, geometry and moves (`S`: samples × history × `STEP_FEATURES`)."""
     rng = rng if rng is not None else np.random.default_rng(0)
     T, n = cells.shape[:2]
     fades = episode_fading(cells, rng, fading_correlation) if fading == 'rayleigh' else None
     on = (cells[..., 0] >= 0)
-    X, Xp, mask, gain, link = [], [], [], [], []
+    X, Xp, mask, gain, link, S = [], [], [], [], [], []
     for j in range(n):
         for i in range(n):
             if i == j:
@@ -524,6 +534,10 @@ def link_samples(
                 g[t] = table.gain(cells[t, j], cells[t, i])
             if fades is not None:
                 g = g * fades[min(i, j), max(i, j)]
+            if steps:                                               # each step's row once per link, its samples take `history` of them
+                moved = lambda a, t: t > 0 and on[t - 1, a] and tuple(cells[t, a]) != tuple(cells[t - 1, a])
+                step_rows = {t: step_features(table.walls, tuple(cells[t, j]), tuple(cells[t, i]), g[t], moved(j, t), moved(i, t))
+                        for t in np.flatnonzero(both)}
             for t in range(max(history, 2), T):
                 if not both[t - history:t + 1].all() or not on[t - 2, i]:
                     continue
@@ -539,9 +553,14 @@ def link_samples(
                 mask.append([True] * len(rows) + [False] * (2 - len(rows)))
                 gain.append(g[t])
                 link.append((j, i, t))
+                if steps:
+                    S.append([step_rows[s] for s in range(t - 1, t - history - 1, -1)])
     F = 3 + history + 2
-    return dict(X=np.array(X, float).reshape(-1, F), X_possible=np.array(Xp, float).reshape(-1, 2, F),
-                possible_mask=np.array(mask, bool).reshape(-1, 2), gain=np.array(gain, float), link=np.array(link, int).reshape(-1, 3))
+    out = dict(X=np.array(X, float).reshape(-1, F), X_possible=np.array(Xp, float).reshape(-1, 2, F),
+               possible_mask=np.array(mask, bool).reshape(-1, 2), gain=np.array(gain, float), link=np.array(link, int).reshape(-1, 3))
+    if steps:
+        out['S'] = np.array(S, np.float32).reshape(-1, history, STEP_FEATURES)
+    return out
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #a1cbbc8a
 def build_dataset(
@@ -553,6 +572,7 @@ def build_dataset(
     fading_correlation: float = 0.95, # Of the fading while both agents stand still
     symmetric: bool = True, # Average the two directions of each traced pair
     seed: int = 0, # Seed of the fading
+    steps: bool = False, # Also each sample's past steps (`S`, `link_samples`')
 ) -> dict:
     "`link_samples` of every episode in the layouts of `seeds`, concatenated, with each sample's `layout` and `episode`."
     parts = []
@@ -561,8 +581,21 @@ def build_dataset(
         z = np.load(Path(trajectory_dir) / f'trajectories_{layout}.npz')
         rng = np.random.default_rng([seed, int(layout)])
         for e, (cells, dirs) in enumerate(zip(z['cells'], z['dirs'])):
-            s = link_samples(table, cells, dirs, history, fading, fading_correlation, rng)
+            s = link_samples(table, cells, dirs, history, fading, fading_correlation, rng, steps)
             s['layout'] = np.full(len(s['gain']), int(layout))
             s['episode'] = np.full(len(s['gain']), e)
             parts.append(s)
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+
+def with_history(data: dict, history: int) -> dict:
+    """`data` (`build_dataset`'s) with only its `history` most recent past gains (and past steps, `S`), for the same
+    transmissions: the data built with a longer history, several history lengths are compared on the same ones."""
+    F = data['X'].shape[-1]
+    built = F - 5
+    if not 1 <= history <= built:
+        raise ValueError(f'history: 1 to {built} (the data has {built} past gains), not {history}')
+    cols = [*range(3 + history), F - 2, F - 1]
+    out = {**data, 'X': data['X'][..., cols], 'X_possible': data['X_possible'][..., cols]}
+    if 'S' in data:
+        out['S'] = data['S'][:, :history]
+    return out

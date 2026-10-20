@@ -16,7 +16,7 @@ import numpy as np
 
 from .channel_data import interior_walls, layout_edits, make_env, nearest_layout, reset_layout
 from .evaluation import LEARNED, baselines, layout_intervals, prediction_errors, transmissions
-from .power_control import MARGINS_DB, TAUS_DB, calibrate, calibrate_layouts, predict_gain
+from .power_control import MARGINS_DB, TAUS_DB, calibrate, calibrate_layouts, predict_gain, predict_on
 
 # %% auto #0
 __all__ = ['GROUPS', 'EDITED', 'PER_LAYOUT', 'ONLINE', 'OVER_LAYOUTS', 'deployment_layouts', 'layout_edits_of', 'save_deployment',
@@ -289,7 +289,7 @@ def evaluate_deployment(
     group, and per target its parameters and `judge`'s metrics per group (and `all`)."""
     budget, g_min = saved['budget'], saved['budget'].g_min
     cal, dep = data['calibration'], data['deployment']
-    predictors = {LEARNED: lambda d: predict_gain(saved['model'], d['X_possible'], d['possible_mask']),
+    predictors = {LEARNED: lambda d: predict_on(saved['model'], d),
                   **baselines(data['train'], saved['history'], quantile, max_iter, fitted)}
     meta = deployment['layouts']
     groups = {g: [k for k in ids if k in set(dep['layout'].tolist())] for g, ids in deployment['groups'].items()}

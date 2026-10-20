@@ -15,12 +15,12 @@ from pathlib import Path
 
 import numpy as np
 
-from .channel_data import DIRS, db, features
+from .channel_data import DIRS, db, features, step_features
 
 # %% auto #0
-__all__ = ['MARGINS_DB', 'TAUS_DB', 'OOV', 'Budget', 'fit_predictor', 'predict_gain', 'outcome', 'calibrate', 'evaluate',
-           'layouts_allowed_below', 'layout_outcome', 'calibrate_layouts', 'save_power_control', 'load_power_control',
-           'LearnedChannelInversion', 'Schedule', 'Tokens', 'c3wm_link']
+__all__ = ['MARGINS_DB', 'TAUS_DB', 'OOV', 'Budget', 'fit_predictor', 'predict_gain', 'predict_on', 'outcome', 'calibrate',
+           'evaluate', 'layouts_allowed_below', 'layout_outcome', 'calibrate_layouts', 'save_power_control',
+           'load_power_control', 'LearnedChannelInversion', 'Schedule', 'Tokens', 'c3wm_link']
 
 # %% ../../nbs/09b_comm.power_control.ipynb #46629e8a
 @dataclass
@@ -57,11 +57,21 @@ def fit_predictor(
                                           random_state=0, **loss, **kwargs)
     return model.fit(X, db(gain))
 
-def predict_gain(model, X_possible: np.ndarray, possible_mask: np.ndarray) -> np.ndarray:
-    "ĝ: the model's lowest prediction over the receiver's possible cells (|h|²)."
+def _predict(model, X: np.ndarray, S: np.ndarray | None = None) -> np.ndarray:
+    "The model's predictions (dB) from the features `X`; a per-step model (`steps`) also gets each row's past steps `S`."
+    return model.predict(X, S) if getattr(model, 'steps', False) else model.predict(X)
+
+def predict_gain(model, X_possible: np.ndarray, possible_mask: np.ndarray, S: np.ndarray | None = None) -> np.ndarray:
+    """ĝ: the model's lowest prediction over the receiver's possible cells (|h|²). A per-step model also gets the
+    past steps `S` (`build_dataset(..., steps=True)`'s), the same for each possible cell."""
     n, k, F = X_possible.shape
-    v = model.predict(X_possible.reshape(n * k, F)).reshape(n, k)
+    S = None if S is None else np.repeat(S, k, axis=0)
+    v = _predict(model, X_possible.reshape(n * k, F), S).reshape(n, k)
     return 10 ** (np.where(possible_mask, v, np.inf).min(1) / 10)
+
+def predict_on(model, data: dict) -> np.ndarray:
+    "`predict_gain` on a dataset (`build_dataset`'s): its possible cells, and its past steps if it has them."
+    return predict_gain(model, data['X_possible'], data['possible_mask'], data.get('S'))
 
 # %% ../../nbs/09b_comm.power_control.ipynb #717839ec
 MARGINS_DB = np.arange(-10, 40.01, 0.25)
@@ -183,7 +193,8 @@ def load_power_control(path) -> dict:
 from comm_core import BPSK, Airtime, Block, IndexCodec, PowerControl, UncodedChain
 
 class LearnedChannelInversion(PowerControl):
-    "Eq. 26 with the gain from `model` (features -> dB): the lowest prediction over the receiver's possible cells."
+    """Eq. 26 with the gain from `model` (features -> dB): the lowest prediction over the receiver's possible cells. A
+    per-step model (`steps`, `comm.sequence`) also gets the link's past steps, rebuilt from the rounds they were sent in."""
 
     def __init__(
         self,
@@ -213,13 +224,28 @@ class LearnedChannelInversion(PowerControl):
         return []                                                   # the model and the callables hold no blocks
 
     def reset(self, seed=None):
-        self._past, self._rounds = {}, []
+        self._past, self._rounds, self._round = {}, [], 0
         self.predicted = None
 
     def update(self, time):
-        "A new round: where the nodes are now, and their headings (the last three rounds are kept)."
+        "A new round: where the nodes are now, and their headings (the rounds a link's history spans are kept)."
+        self._round += 1
         self._rounds = (self._rounds + [({k: tuple(int(v) for v in p) for k, p in self.positions().items()},
-                                          dict(self.headings()))])[-3:]
+                                          dict(self.headings()))])[-max(3, self.history + 2):]
+
+    def _cells(self, r):
+        "Where the nodes were in round `r` (None if not kept)."
+        k = r - self._round + len(self._rounds) - 1
+        return self._rounds[k][0] if 0 <= k < len(self._rounds) else None
+
+    def _steps(self, past, link) -> np.ndarray:
+        "The link's past steps (`step_features`, most recent first): each past gain, the agents' cells in its round, their moves."
+        rows = []
+        for g, r in past[-self.history:][::-1]:
+            at, before = self._cells(r), self._cells(r - 1)
+            moved = lambda node: before is not None and node in before and before[node] != at[node]
+            rows.append(step_features(self.walls, at[link.sender], at[link.receiver], g, moved(link.sender), moved(link.receiver)))
+        return np.array(rows, np.float32)
 
     def allocate(self, gain, noise_power, link=None, message=None):
         past = self._past.setdefault((link.sender, link.receiver), [])
@@ -227,19 +253,21 @@ class LearnedChannelInversion(PowerControl):
             self.predicted = None
             power = self.fallback_power
         else:
-            (earlier, _), (before, heads), (now, _) = self._rounds
+            (earlier, _), (before, heads), (now, _) = self._rounds[-3:]
+            gains = [g for g, _ in past[-self.history:][::-1]]
             tx, rx = now[link.sender], before[link.receiver]
             moved = (tx != before[link.sender], rx != earlier[link.receiver])
             if self.geometry:
                 d = DIRS[int(heads[link.receiver])]
                 free = lambda c: 0 <= c[0] < self.walls.shape[0] and 0 <= c[1] < self.walls.shape[1] and not self.walls[c]
                 possible = [c for c in (rx, (rx[0] + d[0], rx[1] + d[1])) if free(c) and c != tx] or [rx]
-                X = np.array([features(self.walls, tx, c, past[-self.history:][::-1], *moved) for c in possible])
+                X = np.array([features(self.walls, tx, c, gains, *moved) for c in possible])
             else:
-                X = np.array([[*db(past[-self.history:][::-1]), float(moved[0]), float(moved[1])]])
-            self.predicted = 10 ** (self.model.predict(X).min() / 10)
+                X = np.array([[*db(gains), float(moved[0]), float(moved[1])]])
+            S = np.repeat(self._steps(past, link)[None], len(X), 0) if getattr(self.model, 'steps', False) else None
+            self.predicted = 10 ** (_predict(self.model, X, S).min() / 10)
             power = 10 ** ((self.target_snr_db + self.margin_db) / 10) * noise_power / self.predicted
-        past.append(float(gain))                                    # fed back after the transmission
+        past.append((float(gain), self._round))                     # fed back after the transmission, with its round
         return power, True                                          # whether to send: `Schedule`'s
 
 

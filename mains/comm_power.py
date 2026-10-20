@@ -9,6 +9,14 @@ it also judges every method on deployment layouts grouped by their distance to t
 slightly OOD, OOD: chosen in `collect`, `<data_dir>/deployment.json`), with the margin also chosen per layout from a
 pilot and adapted online (c3jepa_wm.comm.deployment). Everything is logged to wandb (`wandb`), and written to
 `<data_dir>/results.json`.
+
+The saved power control's predictor is `predictor.kind` (gradient-boosted trees, or an LSTM or a GRU over the past gains,
+or with `predictor.steps` over the past steps: c3jepa_wm.comm.sequence); `evaluation.extra_predictors` are compared
+with it everywhere. `link.history_data` builds the data with more past gains than `link.history` uses, so runs with
+different histories are judged on the same transmissions:
+
+    python comm_power.py predictor.kind=lstm predictor.steps=true      # train and evaluate (collect, trace: done once)
+    python comm_power.py stage=train link.history=16 link.history_data=32
 """
 import json
 import math
@@ -22,14 +30,14 @@ from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 
-from c3jepa_wm.comm.channel_data import build_dataset, collect_trajectories, trace_layouts, trace_visited_pairs
+from c3jepa_wm.comm.channel_data import build_dataset, collect_trajectories, trace_layouts, trace_visited_pairs, with_history
 from c3jepa_wm.comm.deployment import (deployment_layouts, deployment_summary, deployment_table, evaluate_deployment,
                                        layout_edits_of, load_deployment, plot_deployment, save_deployment)
 from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_control, fit_baselines, guarantee_summary,
                                        layout_summary, network_summary, plot_frontiers, plot_layout_spread, plot_snr, snr_summary,
                                        summary)
-from c3jepa_wm.comm.power_control import (Budget, calibrate, evaluate, fit_predictor, load_power_control,
-                                          predict_gain, save_power_control)
+from c3jepa_wm.comm.power_control import Budget, calibrate, evaluate, load_power_control, predict_on, save_power_control
+from c3jepa_wm.comm.sequence import fit_model, predictor_name
 
 SPLITS = ('train', 'calibration', 'test')
 
@@ -119,11 +127,23 @@ def select_device(device: str) -> str:
 
 
 # --------------------------------------------------------------------------------------------- the data
-def _per_layout(cfg, data, layouts, seed) -> dict:
-    "Each layout's samples (`build_dataset` one layout at a time: the same as all at once, with the fading seeded per layout)."
+def _history_data(cfg) -> int:
+    "The past gains the data is built with: `link.history_data` (at least `link.history`), or `link.history`."
     link = cfg.link
-    return {k: build_dataset(data / 'layouts', data / 'trajectories', [k], history=link.history, fading=link.fading,
-                             fading_correlation=link.fading_correlation, symmetric=link.symmetric, seed=seed)
+    built = int(link.history_data or link.history)
+    if built < link.history:
+        raise ValueError(f"link.history_data ({built}) is fewer past gains than link.history ({link.history}) uses")
+    return built
+
+
+def _per_layout(cfg, data, layouts, seed) -> dict:
+    """Each layout's samples (`build_dataset` one layout at a time: the same as all at once, with the fading seeded per
+    layout), built with `_history_data` past gains and kept to the `link.history` most recent; with the past steps if
+    a predictor reads them."""
+    link = cfg.link
+    return {k: with_history(build_dataset(data / 'layouts', data / 'trajectories', [k], history=_history_data(cfg),
+                                          fading=link.fading, fading_correlation=link.fading_correlation,
+                                          symmetric=link.symmetric, seed=seed, steps=_needs_steps(cfg)), link.history)
             for k in layouts}
 
 
@@ -170,11 +190,63 @@ def _budget(cfg) -> Budget:
 
 
 # --------------------------------------------------------------------------------------------- fitting and judging
+def _options(cfg) -> dict:
+    "`fit_model`'s options for each kind: the trees' and the sequence predictors'."
+    p = cfg.predictor
+    return dict(trees=dict(max_iter=p.max_iter, learning_rate=p.learning_rate),
+                sequence=OmegaConf.to_container(p.sequence, resolve=True))
+
+
+def _saved_spec(cfg) -> dict:
+    "The saved power control's predictor, as `fit_model`'s arguments."
+    p = cfg.predictor
+    return dict(kind=p.kind, quantile=p.quantile, steps=bool(p.steps), **_options(cfg))
+
+
+def _extra(cfg) -> list:
+    """`evaluation.extra_predictors` as `fit_model`'s arguments (`mean`: for the mean, else `predictor.quantile`), with
+    the trees' quantile model when the saved predictor is not it; the saved predictor itself left out."""
+    p, saved = cfg.predictor, _saved_spec(cfg)
+    entries = [dict(kind=e.kind, steps=bool(e.get('steps', False)), quantile=None if e.get('mean', False) else p.quantile)
+               for e in cfg.evaluation.extra_predictors or []]
+    if p.kind != 'trees':
+        entries.insert(0, dict(kind='trees', steps=False, quantile=p.quantile))
+    same = lambda e: (e['kind'], e['steps'], e['quantile']) == (saved['kind'], saved['steps'], saved['quantile'])
+    names = {}
+    for e in entries:
+        if not same(e):
+            names.setdefault(predictor_name(e['kind'], e['quantile'], e['steps']), dict(e, **_options(cfg)))
+    return list(names.values())
+
+
+def _predictor_label(cfg) -> str:
+    "The saved predictor's name (`predictor_name`), for the logs: in the tables it is `LEARNED`."
+    p = cfg.predictor
+    return predictor_name(p.kind, p.quantile, bool(p.steps))
+
+
+def _check_saved(cfg, saved: dict):
+    "The saved power control must be the configured one (its predictor and history): evaluate after training with the same config."
+    was = (saved.get('info', {}).get('config') or {})
+    p, link = was.get('predictor', {}), was.get('link', {})
+    then = (p.get('kind', 'trees'), bool(p.get('steps', False)), p.get('quantile'), link.get('history'),
+            link.get('history_data') or link.get('history'))
+    now = (cfg.predictor.kind, bool(cfg.predictor.steps), cfg.predictor.quantile, cfg.link.history, _history_data(cfg))
+    if was and then != now:
+        raise ValueError(f"the saved power control was trained with (kind, steps, quantile, history, history_data) = {then}, "
+                         f"the config asks for {now}: run stage=train with this config first (or stage=all)")
+
+
+def _needs_steps(cfg) -> bool:
+    "Whether a predictor reads the past steps (then the data has them, `S`)."
+    return bool(cfg.predictor.steps) or any(e['steps'] for e in _extra(cfg))
+
+
 def fit_and_calibrate(cfg, sets: dict) -> tuple:
     "The predictor fit on the training layouts, and its κ and τ chosen on the calibration layouts for `calibration.target`."
-    p, budget = cfg.predictor, _budget(cfg)
-    model = fit_predictor(sets['train']['X'], sets['train']['gain'], p.quantile, p.max_iter, p.learning_rate)
-    estimate = predict_gain(model, sets['calibration']['X_possible'], sets['calibration']['possible_mask'])
+    budget = _budget(cfg)
+    model = fit_model(sets['train'], **_saved_spec(cfg))
+    estimate = predict_on(model, sets['calibration'])
     chosen = calibrate(estimate, sets['calibration']['gain'], budget.g_min, cfg.calibration.target + cfg.calibration.slack,
                        taus_db=_taus(cfg))
     return model, chosen
@@ -183,7 +255,8 @@ def fit_and_calibrate(cfg, sets: dict) -> tuple:
 def judge(cfg, saved: dict, sets: dict, snr_sweep: bool) -> tuple:
     "`evaluate_power_control` on the test layouts (every predictor, every target, per layout), and the baselines' models."
     e = cfg.evaluation
-    fitted = fit_baselines(sets['train'], saved['history'], cfg.predictor.quantile or 0.05, cfg.predictor.max_iter)
+    fitted = fit_baselines(sets['train'], saved['history'], cfg.predictor.quantile or 0.05, cfg.predictor.max_iter,
+                           extra=_extra(cfg))
     snrs = [float(x) for x in (e.snr_targets_db or [])] if snr_sweep else []
     comparison = evaluate_power_control(saved, sets, targets=tuple(e.targets), taus_db=_taus(cfg), slack=cfg.calibration.slack,
                                         quantile=cfg.predictor.quantile or 0.05, max_iter=cfg.predictor.max_iter,
@@ -204,7 +277,8 @@ def network(cfg, data, saved, sets, comparison, fitted, layouts, seed) -> dict:
     return {float(t): compare_network(saved, sets, data / 'layouts', data / 'trajectories', layouts, comparison=comparison,
                                       target=float(t), fitted=fitted, fading=cfg.link.fading,
                                       fading_correlation=cfg.link.fading_correlation, symmetric=cfg.link.symmetric,
-                                      message_bits=e.message_bits, bits_per_token=e.bits_per_token, seed=seed)
+                                      message_bits=e.message_bits, bits_per_token=e.bits_per_token, seed=seed,
+                                      skip=_history_data(cfg))
             for t in e.network_targets}
 
 
@@ -328,6 +402,8 @@ def main(cfg: DictConfig):
     logger.info(OmegaConf.to_yaml(cfg, resolve=True))
     data = Path(to_absolute_path(cfg.data_dir))
     data.mkdir(parents=True, exist_ok=True)
+    outputs = Path(to_absolute_path(cfg.out_dir))                  # the power control, results.json, the plots
+    outputs.mkdir(parents=True, exist_ok=True)
     seeds = _split(cfg, 0)
     every = seeds['train'] + seeds['calibration'] + seeds['test']
     mine = every[cfg.shard.index::cfg.shard.count]
@@ -401,22 +477,27 @@ def main(cfg: DictConfig):
         if not chosen['met']:
             logger.warning(f"no margin and threshold reach {cfg.calibration.target} on the calibration layouts: "
                            f"the most reliable is kept ({chosen['reliability']:.3f})")
-        save_power_control(data / 'power_control.pkl', model, cfg.link.history, chosen, budget,
+        save_power_control(outputs / 'power_control.pkl', model, cfg.link.history, chosen, budget,
                            config=OmegaConf.to_container(cfg, resolve=True))
         logger.info(f"κ = {chosen['margin_db']:+.2f} dB, τ = {chosen['tau_db']} dB on the calibration layouts: "
                     f"{chosen['reliability']:.3f} reached, {chosen['power']:.2f}× perfect CSI's power")
-        log.summary({'train/transmissions': len(sets['train']['gain']), 'train/seconds': time.time() - start,
+        log.summary({'train/predictor': _predictor_label(cfg), 'train/history_data': _history_data(cfg),
+                     'train/transmissions': len(sets['train']['gain']), 'train/seconds': time.time() - start,
                      **{f'train/calibration_{k}': _plain(v) for k, v in chosen.items()}})
 
     if 'evaluate' in stages:
         e, mc = cfg.evaluation, cfg.monte_carlo
-        saved = load_power_control(data / 'power_control.pkl')
+        saved = load_power_control(outputs / 'power_control.pkl')
+        _check_saved(cfg, saved)
+        logger.info(f"the saved power control's predictor ({LEARNED} in the tables): {_predictor_label(cfg)}, "
+                    f"history {cfg.link.history} (data built with {_history_data(cfg)})")
+        log.summary({'evaluate/predictor': _predictor_label(cfg)})
 
         # run 0: the saved power control, on the split in `layouts`
         start = time.time()
         sets = sets_of(seeds, cfg.link.seed)
         c = saved['calibration']
-        test_estimate = predict_gain(saved['model'], sets['test']['X_possible'], sets['test']['possible_mask'])
+        test_estimate = predict_on(saved['model'], sets['test'])
         result = evaluate(test_estimate, sets['test']['gain'], budget.g_min, c['margin_db'], c['tau_db'])
         logger.info(f"on the {len(seeds['test'])} test layouts: {result['reliability']:.3f} of the servable transmissions "
                     f"reach Γ (target {cfg.calibration.target}), {result['power']:.2f}× perfect CSI's power, "
@@ -435,17 +516,17 @@ def main(cfg: DictConfig):
                         o['calibration_below'], o['allowed'], 1 - o['layouts'].get('below', math.nan),
                         o['layouts'].get('significantly_below'), o['layouts'].get('between_std')]
                        for n, r in comparison['predictors'].items() for t, o in r.get('layout_targets', {}).items()])
-        plot_frontiers(comparison, data / 'evaluation.png')
-        images = {'evaluate/frontiers': data / 'evaluation.png'}
+        plot_frontiers(comparison, outputs / 'evaluation.png')
+        images = {'evaluate/frontiers': outputs / 'evaluation.png'}
         for t in e.targets:
-            path = data / f'evaluation_layouts_{100 * float(t):g}.png'
+            path = outputs / f'evaluation_layouts_{100 * float(t):g}.png'
             plot_layout_spread(comparison, float(t), path)
             images[f'evaluate/layouts_{100 * float(t):g}'] = path
         if sweep:
             out['snr'] = sweep
             logger.info('\n' + snr_summary(sweep))
-            plot_snr(sweep, data / 'evaluation_snr.png')
-            images['evaluate/snr'] = data / 'evaluation_snr.png'
+            plot_snr(sweep, outputs / 'evaluation_snr.png')
+            images['evaluate/snr'] = outputs / 'evaluation_snr.png'
         log.summary({f'evaluate/test_{k}': v for k, v in result.items()})
         log.table('evaluate/predictors', ['predictor', 'target', 'reliability', 'power', 'withheld', 'error_free',
                                           'margin_db', 'tau_db', 'met_on_calibration', 'layout_min', 'layout_p10', 'layout_below'],
@@ -479,7 +560,7 @@ def main(cfg: DictConfig):
             deployed_runs.append(deploy_metrics(out['deployment']))
             for t in e.targets:
                 logger.info('\n' + deployment_table(out['deployment'], float(t)))
-                path = data / f'deployment_{100 * float(t):g}.png'
+                path = outputs / f'deployment_{100 * float(t):g}.png'
                 plot_deployment(out['deployment'], float(t), path)
                 images[f'deploy/groups_{100 * float(t):g}'] = path
             log.table('deploy/methods', ['method', 'target', 'group', *DEPLOY_METRICS, 'margin_db', 'tau_db', 'step_db', 'success'],
@@ -549,8 +630,8 @@ def main(cfg: DictConfig):
             log.summary({f'deploy_mc/{n}/{t}/{k}_{stat}': v for n, t, k, m, s, ci, *_ in d_agg
                          if k.split('/')[1] in ('reliability', 'power', 'layout_p10')
                          for stat, v in (('mean', m), ('std', s))})
-        (data / 'results.json').write_text(json.dumps(out, indent=1, default=str))
-        log.files('comm-power-results', [data / 'results.json', data / 'power_control.pkl', *images.values()])
+        (outputs / 'results.json').write_text(json.dumps(out, indent=1, default=str))
+        log.files('comm-power-results', [outputs / 'results.json', outputs / 'power_control.pkl', *images.values()])
     log.finish()
 
 

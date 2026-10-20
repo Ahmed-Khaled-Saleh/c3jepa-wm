@@ -14,7 +14,9 @@ env:                           # configs/comm/env/findgoal.yaml, with:
   variations: [obstacles.number, clutter.number]   # each layout's numbers of wall blocks (0-12) and single walls (0-20), drawn from its seed
 
 stage: all                     # collect | trace | train | evaluate | all (in this order)
-data_dir: ./comm_data          # trajectories/, layouts/ (pairs_<seed>.npz or layout_<seed>.npz), power_control.pkl, results.json, *.png
+data_dir: ./comm_data          # trajectories/, layouts/ (pairs_<seed>.npz or layout_<seed>.npz), deployment.json
+out_dir: ${data_dir}          # power_control.pkl, results.json, *.png: a directory per run (e.g. ${data_dir}/runs/lstm-steps) lets
+                               # runs with other predictors or histories share data_dir's trajectories and layouts
 
 layouts:                       # reset seeds [start, stop): train the predictor / choose κ and τ / judge
   train: [0, 200]
@@ -50,15 +52,33 @@ link:
   noise_dbm: -94.0             # σ²
   max_power_dbm: 20.0          # ρ_max
   history: 4                   # past gains the transmitter knows (L)
+  history_data: null           # build the data with this many past gains (≥ history), the predictors using the `history` most
+                               # recent: runs with different histories are judged on the same transmissions (a link's first
+                               # history_data steps are left out); null: history
   fading: null                 # null, or rayleigh on top of the traced channel
   fading_correlation: 0.95     # of the fading while both agents stand still
   symmetric: true              # average the two traced directions of each pair (the channel is reciprocal)
   seed: 0                      # the fading's draws and the network's payloads (run r of the Monte Carlo: seed + r)
 
-predictor:
+predictor:                     # the saved power control's (LEARNED in the tables; c3jepa_wm.comm.sequence.fit_model)
+  kind: trees                  # trees (gradient-boosted) | lstm | gru
+  steps: false                 # lstm, gru: over the past steps (each one's gain, the geometry between the agents then, their
+                               # moves), not only the past gains
   quantile: 0.05               # the quantile of the gain (dB) predicted; null: the mean
-  max_iter: 400
-  learning_rate: 0.05
+  max_iter: 400                # trees
+  learning_rate: 0.05          # trees
+  sequence:                    # lstm, gru (fit_sequence_predictor), also evaluation.extra_predictors'
+    hidden: 64                 # units of the recurrent cell
+    layers: 1
+    head: 64                   # units of the MLP's two hidden layers
+    dropout: 0.0               # between recurrent layers
+    epochs: 60                 # at most: stopped when the loss on held-out training layouts stops improving
+    patience: 8
+    val_fraction: 0.15         # of the training layouts held out for that
+    batch_size: 512
+    lr: 2.0e-3
+    weight_decay: 1.0e-5
+    device: auto               # cuda if there is one
 
 calibration:
   target: 0.95                 # 1 - ε of the saved power control: share of the servable transmissions reaching Γ
@@ -73,6 +93,17 @@ calibration:
 evaluation:                    # on the test layouts (c3jepa_wm.comm.evaluation)
   targets: [0.9, 0.95, 0.99]   # operating points: κ and τ chosen on the calibration layouts for each
   baselines: true              # C3-WM's predictor (|h|², dB), history quantile, geometry + history mean (perfect CSI always)
+  extra_predictors:            # also these, fit on the training layouts and compared everywhere (test layouts, network,
+                               # deployment, Monte Carlo); mean: for the mean gain, else predictor.quantile. The trees'
+                               # quantile model joins them when predictor.kind is not trees; the saved predictor is left out
+    - {kind: lstm, steps: false}
+    - {kind: gru, steps: false}
+    - {kind: lstm, steps: true}
+    - {kind: gru, steps: true}
+    - {kind: lstm, steps: false, mean: true}
+    - {kind: gru, steps: false, mean: true}
+    - {kind: lstm, steps: true, mean: true}
+    - {kind: gru, steps: true, mean: true}
   snr_targets_db: [4, 7, 10, 13, 16]   # also at these Γ: same predictors, κ and τ chosen again for each ([] or null: skip)
   message_bits: 392            # per message: 49 tokens of 8 bits, uncoded BPSK
   bits_per_token: 8
