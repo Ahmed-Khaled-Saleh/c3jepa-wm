@@ -19,11 +19,13 @@ from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link,
 from .sequence import fit_model, predictor_name
 
 # %% auto #0
-__all__ = ['LEARNED', 'PSI_FLOOR', 'past_gains', 'fit_baselines', 'baselines', 'prediction_errors', 'operating_points',
-           'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread', 'transmissions',
-           'received', 'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis',
-           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'evaluate_power_control', 'summary',
-           'guarantee_summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
+__all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'PSI_FLOOR', 'OPTIMAL', 'OUTAGES', 'past_gains', 'rician_quantile',
+           'rician_tail', 'DecomposedPredictor', 'fit_decomposed', 'fit_baselines', 'baselines', 'prediction_errors',
+           'operating_points', 'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread',
+           'transmissions', 'received', 'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis',
+           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'optimal_reference',
+           'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary',
+           'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -32,10 +34,67 @@ def past_gains(data: dict, history: int) -> np.ndarray:
     "The past gains |h|² of each sample (most recent first), from its features."
     return 10 ** (data['X'][:, 3:3 + history] / 10)
 
+REFERENCES = ('large-scale CSI (oracle)', 'conditional quantile (oracle)')
+DECOMPOSED = 'learned large-scale + fading statistics'
+
+def rician_quantile(q, nu2, var) -> np.ndarray:
+    """The q-quantile of |m + s n|² (n ~ CN(0, 1)) given |m|² = `nu2` and s² = `var`: s²/2 times a noncentral χ² with
+    2 degrees of freedom and noncentrality 2|m|²/s² (a Rician power); |m|² where s² = 0. Broadcast over its arguments."""
+    from scipy.stats import ncx2
+    q, nu2, var = (np.array(a, float) for a in np.broadcast_arrays(q, nu2, var))
+    out = nu2.copy()
+    on = var > 1e-12
+    out[on] = var[on] / 2 * ncx2.ppf(q[on], 2, np.maximum(2 * nu2[on] / var[on], 1e-12))
+    return out
+
+def rician_tail(g, nu2, var) -> np.ndarray:
+    "P(|m + s n|² ≥ g), as `rician_quantile`'s: 1 or 0 where s² = 0."
+    from scipy.stats import ncx2
+    g, nu2, var = (np.array(a, float) for a in np.broadcast_arrays(g, nu2, var))
+    out = (nu2 >= g).astype(float)
+    on = var > 1e-12
+    out[on] = ncx2.sf(2 * g[on] / var[on], 2, np.maximum(2 * nu2[on] / var[on], 1e-12))
+    return out
+
+class DecomposedPredictor:
+    """ĝ = L̂ times the q-quantile of the small-scale fading: the large-scale gain L (dB) and the direct path's share
+    K / (K + 1) learned from the features (trees, for their means), the fading's quantile from its Rician model
+    (`channel_data._fading`'s) instead of learned. In a possible cell that keeps the step before's fading
+    (`possible_still`), the fading is the drift of the last one: |g_{t-1}|² taken as the last gain over L̂, and the
+    direct path in phase with it."""
+
+    def __init__(self, large, direct, quantile: float = 0.05):
+        self.large, self.direct, self.quantile = large, direct, quantile
+
+    def predict_on(self, data: dict) -> np.ndarray:
+        "ĝ (|h|²) on a dataset (`build_dataset`'s, large-scale channel): the lowest over the receiver's possible cells."
+        n, k, F = data['X_possible'].shape
+        X = data['X_possible'].reshape(n * k, F)
+        L = self.large.predict(X)                                                     # dB
+        d = np.clip(self.direct.predict(X), 0.0, 0.999)
+        rho = np.repeat(data['rho'], k)
+        faded, r = np.isfinite(rho), np.nan_to_num(rho)
+        still = data['possible_still'].reshape(-1) & faded
+        last = 10 ** ((X[:, 3] - L) / 10)                                             # |g_{t-1}|²: the last gain over L̂
+        nu2 = np.where(still, ((1 - r) * np.sqrt(d) + r * np.sqrt(last)) ** 2, d)
+        var = np.where(still, (1 - d) * (1 - r ** 2), 1 - d)
+        fade = np.where(faded, rician_quantile(self.quantile, nu2, var), 1.0)
+        v = db(10 ** (L / 10) * fade).reshape(n, k)
+        return 10 ** (np.where(data['possible_mask'], v, np.inf).min(1) / 10)
+
+def fit_decomposed(train: dict, quantile: float = 0.05, max_iter: int = 400) -> DecomposedPredictor:
+    "`DecomposedPredictor` fit on `train` (`build_dataset`'s on the large-scale channel: its `large_scale` and `direct`)."
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    large = fit_predictor(train['X'], train['large_scale'], None, max_iter)
+    direct = HistGradientBoostingRegressor(max_iter=max_iter, learning_rate=0.05, early_stopping=False,
+                                           random_state=0).fit(train['X'], train['direct'])
+    return DecomposedPredictor(large, direct, quantile)
+
 def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, extra=()) -> dict:
     """The baselines' models, fit on `train`: C3-WM's `Ψ` (linear in |h|², eq. 24: `psi`), the same fit in dB (`psi_db`),
     a quantile model of the history alone, the past gains and the moves (`history_model`), and the learned model's
-    features (geometry + history) fit for the mean gain in dB (`mean_model`); and the predictors of `extra`
+    features (geometry + history) fit for the mean gain in dB (`mean_model`); on the large-scale channel, the
+    `DecomposedPredictor` (`decomposed`); and the predictors of `extra`
     (`extra`: name -> model), each a dict of `comm.sequence.fit_model`'s options (kind, quantile, steps, trees,
     sequence), named by `predictor_name`."""
     from comm_core import fit_gain_predictor
@@ -45,14 +104,19 @@ def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: i
                 history_model=fit_predictor(train['X'][:, 3:], train['gain'], quantile, max_iter),
                 mean_model=fit_predictor(train['X'], train['gain'], None, max_iter),
                 extra={predictor_name(s.get('kind', 'trees'), s.get('quantile', 0.05), s.get('steps', False)): fit_model(train, **s)
-                       for s in extra})
+                       for s in extra},
+                **({'decomposed': fit_decomposed(train, quantile, max_iter)} if 'large_scale' in train else {}))
 
 PSI_FLOOR = 1e-30                                                   # eq. 25's projection: 0 would ask for infinite power,
                                                                     # a floor asks for ρ_max at τ = ∞, as the analysis sends it
 
 def baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, fitted: dict | None = None) -> dict:
     """name -> predict(dataset) -> ĝ: C3-WM's predictor (in |h|², and in dB), a history-only quantile model, the
-    geometry + history mean, the `extra` predictors of `fitted`, and perfect CSI; fit on `train` (or `fitted`)."""
+    geometry + history mean, the `extra` predictors of `fitted`, and perfect CSI; fit on `train` (or `fitted`). On the
+    large-scale channel also the `DecomposedPredictor` and two references that know what no predictor can: the true
+    large-scale gain L (`REFERENCES[0]`), and L times the `quantile` of the fading given the steps before
+    (`REFERENCES[1]`: only the fading's new draw unknown; with κ = 0 every transmission's outage is the quantile, the
+    per-transmission problem's solution). The cheapest policy for the reliability on average is `optimal_reference`'s."""
     f = fitted if fitted is not None else fit_baselines(train, history, quantile, max_iter)
     return {
         "C3-WM's (linear in |h|²)": lambda d: np.array([max(f['psi'](p), PSI_FLOOR) for p in past_gains(d, history)]),
@@ -60,6 +124,10 @@ def baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int =
         'history quantile': lambda d: 10 ** (f['history_model'].predict(d['X'][:, 3:]) / 10),
         'geometry + history mean': lambda d: predict_on(f['mean_model'], d),
         **{name: (lambda d, m=m: predict_on(m, d)) for name, m in f.get('extra', {}).items()},
+        **({DECOMPOSED: lambda d: f['decomposed'].predict_on(d)} if 'decomposed' in f else {}),
+        **({REFERENCES[0]: lambda d: d['large_scale'].copy(),
+            REFERENCES[1]: lambda d: d['large_scale'] * rician_quantile(quantile, d['fading_nu2'], d['fading_var'])}
+           if 'large_scale' in train else {}),
         'perfect CSI': lambda d: d['gain'].copy(),
     }
 
@@ -430,6 +498,62 @@ def snr_sweep(
                                          bits_per_token) for name, (c, t) in estimated.items()})
     return out
 
+OPTIMAL = 'optimal policy (oracle)'
+OUTAGES = np.geomspace(1e-5, 0.6, 64)                             # the outages `optimal_reference` chooses from
+
+def _optimal_options(data: dict, g_min: float, outages=OUTAGES) -> tuple:
+    """Each transmission's options knowing L and the fading's distribution given the steps before: the power (units of
+    Γσ²) for each outage, and ρ_max with its success probability; `inf` where an outage needs more than ρ_max."""
+    L, nu2, var = data['large_scale'][:, None], data['fading_nu2'][:, None], data['fading_var'][:, None]
+    power = 1 / (L * rician_quantile(outages[None, :], nu2, var))
+    success = np.broadcast_to(1 - outages, power.shape)
+    power = np.where(power <= 1 / g_min, power, np.inf)
+    cap = rician_tail(g_min / L, nu2, var)                          # at ρ_max: P(G ≥ g_min)
+    return np.c_[power, np.full(len(L), 1 / g_min)], np.c_[success, cap]
+
+def _optimal_choice(options: tuple, lam: float) -> np.ndarray:
+    "Proposition 1's policy at λ: per transmission, the power minimizing power - λ P(success), or 0 (withheld) if none is below 0."
+    power, success = options
+    cost = power - lam * success
+    k = np.argmin(cost, axis=1)
+    best = cost[np.arange(len(k)), k]
+    return np.where(best < 0, power[np.arange(len(k)), k], 0.0)
+
+def optimal_reference(
+    cal: dict, test: dict, # `build_dataset`'s, on the large-scale channel
+    g_min: float, # The weakest servable gain
+    targets=(0.9, 0.95, 0.99), # Reliability targets
+    slack: float = 0.0, # λ chosen for target + slack
+    outages=OUTAGES, # The outages each transmission chooses from (and ρ_max)
+) -> dict:
+    """The cheapest policy for the reliability on average (Proposition 1's), knowing what `REFERENCES[1]` knows: the
+    power minimizing power - λ P(success) per transmission, λ the smallest reaching `target` on the calibration
+    layouts. Per target: λ, and on the test layouts the reliability, power (× perfect CSI's) and withheld share, also
+    after a move and while still (`motion`)."""
+    def judged(power, data, keep=None):
+        keep = np.ones(len(power), bool) if keep is None else keep
+        g, p = data['gain'][keep], power[keep]
+        servable = g >= g_min
+        reached = (p > 0) & (p * g >= 1 - 1e-9)
+        return dict(reliability=float(reached[servable].mean()), power=float(p.mean() / np.where(servable, 1 / g, 0).mean()),
+                    withheld=float((p == 0).mean()))
+    c_opt, t_opt = _optimal_options(cal, g_min, outages), _optimal_options(test, g_min, outages)
+    scale = float(np.mean(1 / cal['gain'][cal['gain'] >= g_min]))
+    out = {}
+    for target in targets:
+        lo, hi = -4.0, 8.0                                        # log10 of λ over the mean perfect-CSI power
+        for _ in range(48):
+            mid = (lo + hi) / 2
+            if judged(_optimal_choice(c_opt, scale * 10 ** mid), cal)['reliability'] >= target + slack:
+                hi = mid
+            else:
+                lo = mid
+        power = _optimal_choice(t_opt, scale * 10 ** hi)
+        out[target] = dict(lam=scale * 10 ** hi, **judged(power, test),
+                           motion={part: dict(share=float(m.mean()), **judged(power, test, m))
+                                   for part, m in (('moved', test['fresh']), ('still', ~test['fresh'])) if m.any()})
+    return out
+
 def evaluate_power_control(
     saved: dict, # `load_power_control`'s result
     data: dict, # {'train': ..., 'calibration': ..., 'test': ...}: `build_dataset`'s
@@ -449,7 +573,8 @@ def evaluate_power_control(
 ) -> dict:
     """Prediction errors, operating points, frontiers and what the agents receive, for the learned predictor and the
     baselines; with `layout_coverage`, also each one's operating points with κ and τ chosen over layouts
-    (`layout_targets`)."""
+    (`layout_targets`); on the large-scale channel, the same κ and τ on the transmissions after a move and while both
+    agents stood still apart (`motion`), and `optimal_reference`'s policy (`optimal`)."""
     budget = saved['budget']
     estimated = estimates(saved, data, compare, quantile, max_iter, fitted)
     test_gain = data['test']['gain']
@@ -462,6 +587,14 @@ def evaluate_power_control(
         results[name]['layouts'] = {target: layout_spread(t, test_gain, data['test']['layout'], budget.g_min, p['margin_db'],
                                                           p['tau_db'], target, min_servable, data['test'].get('episode'))
                                     for target, p in results[name]['targets'].items()}
+    if 'fresh' in data['test']:                                    # after a move (the fading drawn again), and while both stood still
+        parts = {'moved': data['test']['fresh'], 'still': ~data['test']['fresh']}
+        for name, (c, t) in estimated.items():
+            results[name]['motion'] = {
+                part: dict(share=float(m.mean()), prediction=prediction_errors(t[m], test_gain[m]),
+                           targets={target: evaluate(t[m], test_gain[m], budget.g_min, p['margin_db'], p['tau_db'])
+                                    for target, p in results[name]['targets'].items()})
+                for part, m in parts.items() if m.any()}
     if layout_coverage is not None:                                # κ and τ for each layout to reach the target, not their pool
         cal = data['calibration']
         for name, (c, t) in estimated.items():
@@ -479,9 +612,33 @@ def evaluate_power_control(
                                           target, min_servable, data['test'].get('episode')))
     out = dict(servable=float((test_gain >= budget.g_min).mean()), transmissions=len(test_gain), predictors=results,
                layout_coverage=layout_coverage, layout_confidence=layout_confidence)
+    if compare and 'large_scale' in data['test']:
+        out['optimal'] = optimal_reference(data['calibration'], data['test'], budget.g_min, targets, slack)
     if len(snr_targets_db):
         out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token)
     return out
+
+def motion_summary(results: dict, target: float) -> str:
+    "A text table of `evaluate_power_control`'s `motion`: per predictor, after a move and while still, at one target's κ and τ."
+    names = [n for n, r in results['predictors'].items() if 'motion' in r]
+    if not names:
+        return ''
+    parts = list(results['predictors'][names[0]]['motion'])
+    w = max(map(len, names)) + 2
+    shares = ', '.join(f"{p} {100 * results['predictors'][names[0]]['motion'][p]['share']:.0f}%" for p in parts)
+    lines = [f"{100 * target:g}% (κ and τ of all the transmissions), {shares} of the test transmissions",
+             f"{'':{w}s}" + ''.join(f"{p + ': spread / reached / power':>34s}" for p in parts)]
+    for name in names:
+        m = results['predictors'][name]['motion']
+        lines.append(f"{name:{w}s}" + ''.join(f"{m[p]['prediction']['spread_db']:13.1f} dB {100 * m[p]['targets'][target]['reliability']:6.1f}%"
+                                               f"{m[p]['targets'][target]['power']:7.2f}×   " for p in parts))
+    if target in results.get('optimal', {}):
+        o = results['optimal'][target]
+        lines.append(f"{OPTIMAL:{w}s}" + ''.join(f"{'':16s}{100 * o['motion'][p]['reliability']:6.1f}%{o['motion'][p]['power']:7.2f}×   "
+                                                 for p in parts if p in o['motion']))
+        lines.append(f"{OPTIMAL}, all: {100 * o['reliability']:.1f}% reached, {o['power']:.2f}× perfect CSI's power, "
+                     f"{100 * o['withheld']:.1f}% withheld")
+    return '\n'.join(lines)
 
 def summary(results: dict) -> str:
     "A text table: per predictor, its prediction errors and, per target, the reliability and power on the test layouts."

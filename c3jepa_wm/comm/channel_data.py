@@ -555,25 +555,35 @@ def fading_correlation(step_seconds: float = 1.0, doppler_hz: float = 0.1) -> fl
     from scipy.special import j0
     return float(np.clip(j0(2 * np.pi * doppler_hz * step_seconds), 0.0, 0.9999))
 
-def _fading(cells: np.ndarray, rng: np.random.Generator, rho: float, direct=None) -> np.ndarray:
+def _fading(cells: np.ndarray, rng: np.random.Generator, rho: float, direct=None, conditional: bool = False):
     """|g_t|² of one pair of agents' small-scale fading over an episode's steps (cells: (T, 2, 2)), of mean 1: Rician,
     `direct[t]` the direct path's share of the power (K / (K + 1); 0: Rayleigh). When an agent moves (a cell is many
     wavelengths) the scattered part and the direct path's phase are drawn again; while both stand still the scattered
-    part drifts, `ρ` from one step to the next, and the direct path stays."""
+    part drifts, `ρ` from one step to the next, and the direct path stays. With `conditional`, also the distribution
+    of g_t given the steps before (what only its new draw leaves unknown): g_t = m_t + s_t n with n ~ CN(0, 1), as
+    (|m_t|², s_t²), and whether g_t was drawn again (`fresh`)."""
     direct = np.zeros(len(cells)) if direct is None else np.clip(np.asarray(direct, float), 0.0, 1.0)
     draw = lambda: (rng.standard_normal() + 1j * rng.standard_normal()) / np.sqrt(2)
     w, phase, out = draw(), rng.uniform(0, 2 * np.pi), np.ones(len(cells))
+    nu2, var, fresh = np.ones(len(cells)), np.zeros(len(cells)), np.ones(len(cells), bool)
     for t in range(len(cells)):
+        d = direct[t]
         if t and not np.array_equal(cells[t], cells[t - 1]):
             w, phase = draw(), rng.uniform(0, 2 * np.pi)
         elif t:
+            nu2[t] = abs(np.sqrt(d) * np.exp(1j * phase) + np.sqrt(1 - d) * rho * w) ** 2
+            var[t], fresh[t] = (1 - d) * (1 - rho ** 2), False
             w = rho * w + np.sqrt(1 - rho ** 2) * draw()
-        out[t] = abs(np.sqrt(direct[t]) * np.exp(1j * phase) + np.sqrt(1 - direct[t]) * w) ** 2
-    return out
+        if fresh[t]:
+            nu2[t], var[t] = d, 1 - d
+        out[t] = abs(np.sqrt(d) * np.exp(1j * phase) + np.sqrt(1 - d) * w) ** 2
+    return (out, nu2, var, fresh) if conditional else out
 
-def episode_fading(cells: np.ndarray, rng: np.random.Generator, rho: float = 0.9, table: ChannelTable | None = None) -> dict:
+def episode_fading(cells: np.ndarray, rng: np.random.Generator, rho: float = 0.9, table: ChannelTable | None = None,
+                   conditional: bool = False) -> dict:
     """Each pair of agents' small-scale fading |g_t|² over an episode (cells: (steps, agents, 2)): {(i, j): (steps,)},
-    i < j, the same both ways; Rician with the direct path's share from `table` (None: Rayleigh)."""
+    i < j, the same both ways; Rician with the direct path's share from `table` (None: Rayleigh). With `conditional`,
+    each is `_fading`'s (|g_t|², |m_t|², s_t², fresh)."""
     n = cells.shape[1]
     on = cells[..., 0] >= 0
     def direct(i, j):
@@ -581,7 +591,8 @@ def episode_fading(cells: np.ndarray, rng: np.random.Generator, rho: float = 0.9
             return None
         return [table.direct_fraction(cells[t, i], cells[t, j]) if on[t, i] and on[t, j] and tuple(cells[t, i]) != tuple(cells[t, j])
                 else 0.0 for t in range(len(cells))]
-    return {(i, j): _fading(cells[:, [i, j]], np.random.default_rng(rng.integers(2 ** 63)), rho, direct(i, j))
+    return {(i, j): _fading(cells[:, [i, j]], np.random.default_rng(rng.integers(2 ** 63)), rho, direct(i, j),
+                            conditional)
             for i in range(n) for j in range(i + 1, n)}
 
 def link_samples(
@@ -596,16 +607,23 @@ def link_samples(
     channel: str = 'coherent', # The table's (`ChannelTable.gain`): coherent, or large_scale (with the fading: rician)
 ) -> dict:
     """Per directed link and step: the features (to the receiver's actual cell, and to each of its possible cells) and the
-    gain; with `steps`, also the past steps' gains, geometry and moves (`S`: samples × history × `STEP_FEATURES`)."""
+    gain; with `steps`, also the past steps' gains, geometry and moves (`S`: samples × history × `STEP_FEATURES`). On
+    the large-scale channel, also what the references and the decomposed predictor need (`comm.evaluation`): the
+    large-scale gain L (`large_scale`) and the direct path's share K / (K + 1) (`direct`) between the actual cells,
+    whether each possible cell keeps the fading of the step before (`possible_still`: the receiver stays there and the
+    transmitter did not move), the fading's distribution given the steps before (`fading_nu2`, `fading_var`: the gain is
+    L |m + s n|², n ~ CN(0, 1)), whether it was drawn again (`fresh`), and its ρ (`rho`; NaN: no fading)."""
     rng = rng if rng is not None else np.random.default_rng(0)
     if fading not in FADINGS:
         raise ValueError(f"fading: one of {FADINGS}, not {fading!r} (Rayleigh: 'rician' on a table without a direct path)")
     if fading is not None and channel != 'large_scale':
         raise ValueError("the coherent channel already holds a small-scale draw: fading on top of the large_scale channel only")
     T, n = cells.shape[:2]
-    fades = episode_fading(cells, rng, fading_correlation, table) if fading == 'rician' else None
+    fades = episode_fading(cells, rng, fading_correlation, table, conditional=True) if fading == 'rician' else None
     on = (cells[..., 0] >= 0)
+    large = channel == 'large_scale'
     X, Xp, mask, gain, link, S = [], [], [], [], [], []
+    extra = {k: [] for k in ('large_scale', 'direct', 'possible_still', 'fading_nu2', 'fading_var', 'fresh')} if large else {}
     for j in range(n):
         for i in range(n):
             if i == j:
@@ -614,8 +632,10 @@ def link_samples(
             g = np.zeros(T)
             for t in np.flatnonzero(both):
                 g[t] = table.gain(cells[t, j], cells[t, i], channel)
+            L = g.copy()
             if fades is not None:
-                g = g * fades[min(i, j), max(i, j)]
+                fade, nu2, var, fresh = fades[min(i, j), max(i, j)]
+                g = g * fade
             if steps:                                               # each step's row once per link, its samples take `history` of them
                 moved = lambda a, t: t > 0 and on[t - 1, a] and tuple(cells[t, a]) != tuple(cells[t - 1, a])
                 step_rows = {t: step_features(table.walls, tuple(cells[t, j]), tuple(cells[t, i]), g[t], moved(j, t), moved(i, t))
@@ -635,6 +655,15 @@ def link_samples(
                 mask.append([True] * len(rows) + [False] * (2 - len(rows)))
                 gain.append(g[t])
                 link.append((j, i, t))
+                if large:
+                    still = [c == rx_before and not moved[0] for c in possible]
+                    extra['large_scale'].append(L[t])
+                    extra['direct'].append(table.direct_fraction(tx, rx))
+                    extra['possible_still'].append(still + [False] * (2 - len(still)))
+                    pair_moved = tx != tuple(cells[t - 1, j]) or rx != rx_before
+                    extra['fading_nu2'].append(nu2[t] if fades is not None else 1.0)
+                    extra['fading_var'].append(var[t] if fades is not None else 0.0)
+                    extra['fresh'].append(bool(fresh[t]) if fades is not None else pair_moved)
                 if steps:
                     S.append([step_rows[s] for s in range(t - 1, t - history - 1, -1)])
     F = 3 + history + 2
@@ -642,6 +671,10 @@ def link_samples(
                possible_mask=np.array(mask, bool).reshape(-1, 2), gain=np.array(gain, float), link=np.array(link, int).reshape(-1, 3))
     if steps:
         out['S'] = np.array(S, np.float32).reshape(-1, history, STEP_FEATURES)
+    if large:
+        out.update({k: np.array(v, bool if k in ('possible_still', 'fresh') else float) for k, v in extra.items()})
+        out['possible_still'] = out['possible_still'].reshape(-1, 2)
+        out['rho'] = np.full(len(out['gain']), float(fading_correlation) if fades is not None else math.nan)
     return out
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #a1cbbc8a

@@ -34,7 +34,7 @@ from c3jepa_wm.comm.channel_data import (build_dataset, collect_trajectories, fa
                                          with_history)
 from c3jepa_wm.comm.deployment import (deployment_layouts, deployment_summary, deployment_table, evaluate_deployment,
                                        layout_edits_of, load_deployment, plot_deployment, save_deployment)
-from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_control, fit_baselines, guarantee_summary,
+from c3jepa_wm.comm.evaluation import (LEARNED, OPTIMAL, motion_summary, compare_network, evaluate_power_control, fit_baselines, guarantee_summary,
                                        layout_summary, network_summary, plot_frontiers, plot_layout_spread, plot_snr, snr_summary,
                                        summary)
 from c3jepa_wm.comm.power_control import Budget, calibrate, evaluate, load_power_control, predict_on, save_power_control
@@ -368,6 +368,12 @@ def metrics(comparison: dict) -> list:
             rows += [(name, t, f'over_layouts/{k}', o[k]) for k in ('reliability', 'power', 'withheld', 'margin_db', 'tau_db')]
             rows += [(name, t, 'over_layouts/met_on_calibration', float(o['met_on_calibration']))]
             rows += [(name, t, f'over_layouts/layout_{k}', o['layouts'][k]) for k in LAYOUT_METRICS if k in o['layouts']]
+        for part, m in r.get('motion', {}).items():                       # after a move, and while both stood still
+            rows += [(name, None, f'motion/{part}/{k}', m['prediction'][k]) for k in ('bias_db', 'spread_db')]
+            rows += [(name, t, f'motion/{part}/{k}', o[k]) for t, o in m['targets'].items() for k in ('reliability', 'power')]
+    for t, o in comparison.get('optimal', {}).items():                  # Proposition 1's policy, knowing L and the fading's law
+        rows += [(OPTIMAL, t, k, o[k]) for k in ('reliability', 'power', 'withheld')]
+        rows += [(OPTIMAL, t, f'motion/{part}/{k}', m[k]) for part, m in o['motion'].items() for k in ('reliability', 'power')]
     return rows
 
 
@@ -540,6 +546,20 @@ def main(cfg: DictConfig):
         out = dict(calibration=c, test=result, comparison=comparison, layouts=seeds)
         logger.info('\n' + summary(comparison))
         logger.info('\n' + layout_summary(comparison))
+        for t in e.targets:
+            if text := motion_summary(comparison, float(t)):
+                logger.info('\n' + text)
+        motion = [[n, part, m['share'], m['prediction']['bias_db'], m['prediction']['spread_db'], t, o['reliability'], o['power'],
+                   o['withheld']] for n, r in comparison['predictors'].items() for part, m in r.get('motion', {}).items()
+                  for t, o in m['targets'].items()]
+        motion += [[OPTIMAL, part, m['share'], None, None, t, m['reliability'], m['power'], m['withheld']]
+                   for t, o in comparison.get('optimal', {}).items() for part, m in o['motion'].items()]
+        if motion:
+            log.table('evaluate/motion', ['predictor', 'part', 'share', 'bias_db', 'spread_db', 'target', 'reliability', 'power',
+                                          'withheld'], motion)
+        if comparison.get('optimal'):
+            log.table('evaluate/optimal', ['target', 'reliability', 'power', 'withheld', 'lambda'],
+                      [[t, o['reliability'], o['power'], o['withheld'], o['lam']] for t, o in comparison['optimal'].items()])
         if comparison.get('layout_coverage'):
             logger.info('\n' + guarantee_summary(comparison))
             log.table('evaluate/over_layouts', ['predictor', 'target', 'reliability', 'power', 'withheld', 'margin_db', 'tau_db',
