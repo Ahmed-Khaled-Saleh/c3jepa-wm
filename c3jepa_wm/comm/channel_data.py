@@ -15,11 +15,11 @@ from pathlib import Path
 import numpy as np
 
 # %% auto #0
-__all__ = ['DIRS', 'STEP_FEATURES', 'make_env', 'free_cells', 'reset_layout', 'reset_in_layout', 'interior_walls', 'layout_edits',
-           'edit_distance', 'layout_distance', 'nearest_layout', 'trace_layouts', 'wall_geometry', 'ChannelTable',
-           'table_path', 'collect_trajectories', 'PairCache', 'visited_pairs', 'trace_visited_pairs',
-           'CachedRayTracedFading', 'db', 'features', 'step_features', 'episode_fading', 'link_samples',
-           'build_dataset', 'with_history']
+__all__ = ['DIRS', 'CHANNELS', 'DIRECT_TOLERANCE', 'STEP_FEATURES', 'FADINGS', 'make_env', 'free_cells', 'reset_layout',
+           'reset_in_layout', 'interior_walls', 'layout_edits', 'edit_distance', 'layout_distance', 'nearest_layout',
+           'trace_layouts', 'wall_geometry', 'ChannelTable', 'table_path', 'collect_trajectories', 'PairCache',
+           'visited_pairs', 'trace_visited_pairs', 'CachedRayTracedFading', 'db', 'features', 'step_features',
+           'fading_correlation', 'episode_fading', 'link_samples', 'build_dataset', 'with_history']
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #f16dd0ab
 DIRS = [(1, 0), (0, 1), (-1, 0), (0, -1)]       # MultiGrid's headings: right, down, left, up
@@ -224,8 +224,13 @@ def _pair(a, b) -> tuple:
     a, b = tuple(int(v) for v in a), tuple(int(v) for v in b)
     return (a, b) if a <= b else (b, a)
 
+CHANNELS = ('coherent', 'large_scale')
+
 class ChannelTable:
-    "A traced layout: the gain between two of its free cells, and its walls. From a full table, or a `PairCache`'s pairs."
+    """A traced layout: the gain between two of its free cells, and its walls. From a full table, or a `PairCache`'s
+    pairs. The gain is the `coherent` one, |Σ aᵢ|² (the paths' amplitudes added at the cell's centre: one small-scale
+    draw), or the `large_scale` one, Σ |aᵢ|² (their powers: path loss and shadowing, a pair cache's since the powers are
+    kept), with `direct_fraction` the direct path's share of it (a Rician fading's K / (K + 1))."""
 
     def __init__(
         self,
@@ -237,19 +242,38 @@ class ChannelTable:
         self.idx = {c: i for i, c in enumerate(self.cells)}
         self.walls = z['walls']
         self.source = json.loads(str(z['source'])) if 'source' in z.files else {}
+        self.power = self.direct = None
         if 'pairs' in z.files:                                     # a pair cache: each pair traced one way
             self.G = None
-            self.pairs = {_pair(a, b): max(abs(complex(h)) ** 2, 1e-15) for (a, b), h in zip(z['pairs'].tolist(), z['H'])}
+            keys = [_pair(a, b) for a, b in z['pairs'].tolist()]
+            self.pairs = {k: max(abs(complex(h)) ** 2, 1e-15) for k, h in zip(keys, z['H'])}
+            if 'P' in z.files:                                     # the paths' powers, and the direct path's
+                self.power = {k: max(float(p), 1e-15) for k, p in zip(keys, z['P'])}
+                self.direct = {k: float(d) for k, d in zip(keys, z['D'])}
         else:
             G = np.abs(z['H'].astype(np.complex128)) ** 2
             self.G = np.maximum((G + G.T) / 2 if symmetric else G, 1e-15)        # G[rx, tx]; no path: -150 dB
             self.pairs = None
 
-    def gain(self, tx, rx) -> float:
-        "|h|² from cell `tx` to cell `rx` (from a pair cache: KeyError if the pair was not traced)."
+    def gain(self, tx, rx, channel: str = 'coherent') -> float:
+        "|h|² from cell `tx` to cell `rx`, `channel` one of `CHANNELS` (from a pair cache: KeyError if the pair was not traced)."
+        if channel == 'large_scale':
+            if self.power is None:
+                raise ValueError("this layout was traced without the paths' powers (a full table, or a pair cache from before "
+                                 "they were kept): trace it again (into a new layout directory) for the large-scale channel")
+            return self.power[_pair(tx, rx)]
+        if channel != 'coherent':
+            raise ValueError(f'channel: one of {CHANNELS}, not {channel!r}')
         if self.pairs is not None:
             return self.pairs[_pair(tx, rx)]
         return float(self.G[self.idx[tuple(rx)], self.idx[tuple(tx)]])
+
+    def direct_fraction(self, tx, rx) -> float:
+        "The direct path's share of the large-scale power between two cells (0: none, or unknown)."
+        if self.power is None:
+            return 0.0
+        k = _pair(tx, rx)
+        return float(min(self.direct[k] / self.power[k], 1.0))
 
 def table_path(layout_dir, seed) -> Path:
     "The layout's full table (`layout_<seed>.npz`) if there is one, else its pair cache (`pairs_<seed>.npz`)."
@@ -307,8 +331,14 @@ def collect_trajectories(
     return paths
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #75eacff2
+DIRECT_TOLERANCE = 0.2e-9                                         # s: a path this close to the straight line's delay is the direct one
+
 class PairCache:
-    "A layout's traced pairs of cells, kept in `path`; `trace` traces the missing ones (one way each, grouped by transmitter)."
+    """A layout's traced pairs of cells, kept in `path`; `trace` traces the missing ones (one way each, grouped by
+    transmitter). Per pair: the coherent channel `H` (the paths' amplitudes added), the large-scale power `P` (their
+    powers added) and the direct path's power `D` (the path with the straight line's delay, within `DIRECT_TOLERANCE`:
+    line of sight, or straight through thin walls). A cache traced with other settings (frequency, depth, scene,
+    solver) is refused."""
 
     def __init__(
         self,
@@ -318,7 +348,7 @@ class PairCache:
         frequency: float = 2.4e9, # Carrier frequency (Hz)
         max_depth: int = 5, # Reflections per path
         scene: dict | None = None, # `SceneConfig` fields to change
-        tracer=None, # tracer(tx_cell, rx_cells) -> their complex channels; None: Sionna RT (e.g. a stand-in for tests)
+        tracer=None, # tracer(tx_cell, rx_cells) -> per receiver its complex channel, or (channel, power, direct power); None: Sionna RT
         edits: dict | None = None, # The edited layouts (`reset_layout`), if `layout_seed` is one
         **solver_kwargs, # Other options of comm-core's `trace_paths` (e.g. batch) and Sionna RT's PathSolver
     ):
@@ -331,12 +361,27 @@ class PairCache:
         self.walls = np.ones((g.width, g.height), np.uint8)
         for c in self.cells:
             self.walls[c] = 0
-        self.H, self.unsaved = {}, 0
+        self.H, self.P, self.D, self.unsaved, self.powers = {}, {}, {}, 0, True
         if self.path.exists():
             z = np.load(self.path)
             if [tuple(c) for c in z['cells'].tolist()] != self.cells:
                 raise ValueError(f"{self.path} holds another layout than layout {self.seed}'s")
-            self.H = {_pair(a, b): complex(h) for (a, b), h in zip(z['pairs'].tolist(), z['H'])}
+            if 'source' in z.files:
+                was = json.loads(str(z['source']))
+                then = json.dumps({k: was.get(k) for k in ('frequency', 'max_depth', 'scene', 'solver')}, sort_keys=True, default=str)
+                if then != self._settings():
+                    raise ValueError(f"{self.path} was traced with other settings ({then}) than these ({self._settings()}): "
+                                     "trace into another layout directory")
+            keys = [_pair(a, b) for a, b in z['pairs'].tolist()]
+            self.H = {k: complex(h) for k, h in zip(keys, z['H'])}
+            self.powers = 'P' in z.files                            # a cache from before the powers were kept: none
+            if self.powers:
+                self.P = {k: float(p) for k, p in zip(keys, z['P'])}
+                self.D = {k: float(d) for k, d in zip(keys, z['D'])}
+
+    def _settings(self) -> str:
+        return json.dumps(dict(frequency=self.frequency, max_depth=self.max_depth, scene=self.scene, solver=self.solver_kwargs),
+                          sort_keys=True, default=str)
 
     def missing(self, pairs) -> list[tuple]:
         "The pairs (of distinct cells) not traced yet."
@@ -346,14 +391,18 @@ class PairCache:
         "Trace the missing `pairs`; the number traced."
         from collections import Counter, defaultdict
         todo = self.missing(pairs)
+        if todo and not self.powers:
+            raise ValueError(f"{self.path} was traced before the paths' powers were kept: trace into another layout directory")
         degree = Counter(c for p in todo for c in p)
         groups = defaultdict(list)
         for a, b in todo:
             tx, rx = (a, b) if (degree[a], a) >= (degree[b], b) else (b, a)
             groups[tx].append(rx)
         for k, (tx, rxs) in enumerate(groups.items()):
-            for rx, h in zip(rxs, self._trace(tx, rxs)):
-                self.H[_pair(tx, rx)] = complex(h)
+            for rx, r in zip(rxs, self._trace(tx, rxs)):
+                h, p, d = r if isinstance(r, tuple) else (r, abs(complex(r)) ** 2, 0.0)   # a stand-in's channel: no direct path
+                k = _pair(tx, rx)
+                self.H[k], self.P[k], self.D[k] = complex(h), float(p), float(d)
             if progress:
                 print(f'{k + 1} / {len(groups)} transmitters', end='\r')
         self.unsaved += len(todo)
@@ -375,13 +424,18 @@ class PairCache:
             self._scene.frequency = self.frequency
         g = self.env.unwrapped.grid
         point = lambda c: grid_to_world(c[0], c[1], g.width, g.height, config, config.antenna_height)
-        a = trace_paths(self._scene, [point(tx)], [point(c) for c in rxs], max_depth=self.max_depth, **self.solver_kwargs)['a']
-        return a[0].sum(-1)                                       # (receivers,), summed over the paths
+        paths = trace_paths(self._scene, [point(tx)], [point(c) for c in rxs], max_depth=self.max_depth, **self.solver_kwargs)
+        a, tau = paths['a'][0], paths['tau'][0]                   # (receivers, paths)
+        straight = np.linalg.norm(paths['rx_points'] - paths['tx_points'][0], axis=1) / 299792458.0
+        direct = (np.abs(a) > 0) & (np.abs(tau - straight[:, None]) < DIRECT_TOLERANCE)
+        power = (np.abs(a) ** 2).sum(-1)
+        return [(complex(h), float(p), float(d)) for h, p, d in zip(a.sum(-1), power, (np.abs(a) ** 2 * direct).sum(-1))]
 
-    def gain(self, a, b) -> float:
-        "|h|² between cells `a` and `b`, traced now if it was not."
+    def gain(self, a, b, channel: str = 'coherent') -> float:
+        "|h|² between cells `a` and `b` (`ChannelTable.gain`'s `channel`), traced now if it was not."
         self.trace([(a, b)])
-        return max(abs(self.H[_pair(a, b)]) ** 2, 1e-15)
+        k = _pair(a, b)
+        return max(self.P[k] if channel == 'large_scale' else abs(self.H[k]) ** 2, 1e-15)
 
     def save(self):
         "Write the cache to `path`."
@@ -389,9 +443,11 @@ class PairCache:
         source = dict(env=_plain(self.env_cfg), seed=self.seed, frequency=self.frequency, max_depth=self.max_depth,
                       scene=self.scene, solver=self.solver_kwargs, edit=self.edit)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        powers = dict(P=np.array([self.P[p] for p in pairs], np.float64), D=np.array([self.D[p] for p in pairs], np.float64)) \
+            if self.powers else {}
         np.savez_compressed(self.path, pairs=np.array(pairs, np.int16).reshape(-1, 2, 2),
                             H=np.array([self.H[p] for p in pairs], np.complex64), cells=np.array(self.cells, np.int16),
-                            walls=self.walls, source=json.dumps(source, default=str))
+                            walls=self.walls, source=json.dumps(source, default=str), **powers)
         self.unsaved = 0
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #6e268ddb
@@ -446,8 +502,9 @@ class CachedRayTracedFading(Fading):
         self,
         cache: PairCache, # The layout's cache
         save_every: int = 50, # Write the cache after this many new pairs
+        channel: str = 'coherent', # `ChannelTable`'s: coherent, or large_scale (its amplitude, √P)
     ):
-        self.cache, self.save_every, self.node_positions = cache, save_every, {}
+        self.cache, self.save_every, self.node_positions, self.channel = cache, save_every, {}, channel
 
     def set_positions(self, positions):
         "Where the nodes are now: {node: (x, y)}."
@@ -456,7 +513,7 @@ class CachedRayTracedFading(Fading):
     def gain_between(self, tx_position, rx_position) -> float:
         "|h|² between two cells (inf: the same cell)."
         a, b = tuple(int(v) for v in tx_position), tuple(int(v) for v in rx_position)
-        return math.inf if a == b else self.cache.gain(a, b)
+        return math.inf if a == b else self.cache.gain(a, b, self.channel)
 
     def coefficient(self, transmission, link) -> complex:
         a, b = self.node_positions[transmission.sender], self.node_positions[transmission.receiver]
@@ -464,7 +521,8 @@ class CachedRayTracedFading(Fading):
             return math.inf
         if self.cache.trace([(a, b)]) and self.cache.unsaved >= self.save_every:
             self.cache.save()
-        h = self.cache.H[_pair(a, b)]
+        k = _pair(a, b)
+        h = self.cache.H[k] if self.channel == 'coherent' else complex(math.sqrt(self.cache.P[k]))
         return h if abs(h) ** 2 >= 1e-15 else complex(math.sqrt(1e-15))   # no path: -150 dB
 
     def save(self):
@@ -489,22 +547,41 @@ def step_features(walls: np.ndarray, tx, rx, gain: float, tx_moved: bool, rx_mov
     return [float(db(gain)), math.log10(max(distance, 0.5)), distance, crossed, float(tx_moved), float(rx_moved)]
 
 # %% ../../nbs/09a_comm.channel_data.ipynb #f8f7219d
-def _fading(cells: np.ndarray, rng: np.random.Generator, rho: float) -> np.ndarray:
-    "|g_t|² of one pair of agents' Rayleigh fading over an episode's steps (cells: (T, 2, 2))."
+FADINGS = (None, 'rician')
+
+def fading_correlation(step_seconds: float = 1.0, doppler_hz: float = 0.1) -> float:
+    """ρ of the small-scale fading between two steps while both agents stand still: Jakes' J₀(2π f_D Δt), the
+    environment's Doppler `doppler_hz` (people walking by, doors) over a step of `step_seconds`, in [0, 1)."""
+    from scipy.special import j0
+    return float(np.clip(j0(2 * np.pi * doppler_hz * step_seconds), 0.0, 0.9999))
+
+def _fading(cells: np.ndarray, rng: np.random.Generator, rho: float, direct=None) -> np.ndarray:
+    """|g_t|² of one pair of agents' small-scale fading over an episode's steps (cells: (T, 2, 2)), of mean 1: Rician,
+    `direct[t]` the direct path's share of the power (K / (K + 1); 0: Rayleigh). When an agent moves (a cell is many
+    wavelengths) the scattered part and the direct path's phase are drawn again; while both stand still the scattered
+    part drifts, `ρ` from one step to the next, and the direct path stays."""
+    direct = np.zeros(len(cells)) if direct is None else np.clip(np.asarray(direct, float), 0.0, 1.0)
     draw = lambda: (rng.standard_normal() + 1j * rng.standard_normal()) / np.sqrt(2)
-    g, out = draw(), np.ones(len(cells))
+    w, phase, out = draw(), rng.uniform(0, 2 * np.pi), np.ones(len(cells))
     for t in range(len(cells)):
         if t and not np.array_equal(cells[t], cells[t - 1]):
-            g = draw()
+            w, phase = draw(), rng.uniform(0, 2 * np.pi)
         elif t:
-            g = rho * g + np.sqrt(1 - rho ** 2) * draw()
-        out[t] = abs(g) ** 2
+            w = rho * w + np.sqrt(1 - rho ** 2) * draw()
+        out[t] = abs(np.sqrt(direct[t]) * np.exp(1j * phase) + np.sqrt(1 - direct[t]) * w) ** 2
     return out
 
-def episode_fading(cells: np.ndarray, rng: np.random.Generator, rho: float = 0.95) -> dict:
-    "Each pair of agents' Rayleigh fading |g_t|² over an episode (cells: (steps, agents, 2)): {(i, j): (steps,)}, i < j, the same both ways."
+def episode_fading(cells: np.ndarray, rng: np.random.Generator, rho: float = 0.9, table: ChannelTable | None = None) -> dict:
+    """Each pair of agents' small-scale fading |g_t|² over an episode (cells: (steps, agents, 2)): {(i, j): (steps,)},
+    i < j, the same both ways; Rician with the direct path's share from `table` (None: Rayleigh)."""
     n = cells.shape[1]
-    return {(i, j): _fading(cells[:, [i, j]], np.random.default_rng(rng.integers(2 ** 63)), rho)
+    on = cells[..., 0] >= 0
+    def direct(i, j):
+        if table is None:
+            return None
+        return [table.direct_fraction(cells[t, i], cells[t, j]) if on[t, i] and on[t, j] and tuple(cells[t, i]) != tuple(cells[t, j])
+                else 0.0 for t in range(len(cells))]
+    return {(i, j): _fading(cells[:, [i, j]], np.random.default_rng(rng.integers(2 ** 63)), rho, direct(i, j))
             for i in range(n) for j in range(i + 1, n)}
 
 def link_samples(
@@ -512,16 +589,21 @@ def link_samples(
     cells: np.ndarray, # One episode's cells: (steps, agents, 2), -1 when an agent is not on the grid
     dirs: np.ndarray, # Its headings: (steps, agents)
     history: int = 4, # Past gains the transmitter knows
-    fading: str | None = None, # None, or 'rayleigh' on top of the table
-    fading_correlation: float = 0.95, # Of the fading between steps while both agents stand still
+    fading: str | None = None, # None, or 'rician': small-scale fading on top of the large-scale channel (`FADINGS`)
+    fading_correlation: float = 0.9, # ρ of the fading between steps while both agents stand still (`fading_correlation`)
     rng: np.random.Generator | None = None, # The fading's randomness
     steps: bool = False, # Also `S`: each past step's `step_features` (most recent first), for the per-step sequence predictors
+    channel: str = 'coherent', # The table's (`ChannelTable.gain`): coherent, or large_scale (with the fading: rician)
 ) -> dict:
     """Per directed link and step: the features (to the receiver's actual cell, and to each of its possible cells) and the
     gain; with `steps`, also the past steps' gains, geometry and moves (`S`: samples × history × `STEP_FEATURES`)."""
     rng = rng if rng is not None else np.random.default_rng(0)
+    if fading not in FADINGS:
+        raise ValueError(f"fading: one of {FADINGS}, not {fading!r} (Rayleigh: 'rician' on a table without a direct path)")
+    if fading is not None and channel != 'large_scale':
+        raise ValueError("the coherent channel already holds a small-scale draw: fading on top of the large_scale channel only")
     T, n = cells.shape[:2]
-    fades = episode_fading(cells, rng, fading_correlation) if fading == 'rayleigh' else None
+    fades = episode_fading(cells, rng, fading_correlation, table) if fading == 'rician' else None
     on = (cells[..., 0] >= 0)
     X, Xp, mask, gain, link, S = [], [], [], [], [], []
     for j in range(n):
@@ -531,7 +613,7 @@ def link_samples(
             both = on[:, i] & on[:, j]
             g = np.zeros(T)
             for t in np.flatnonzero(both):
-                g[t] = table.gain(cells[t, j], cells[t, i])
+                g[t] = table.gain(cells[t, j], cells[t, i], channel)
             if fades is not None:
                 g = g * fades[min(i, j), max(i, j)]
             if steps:                                               # each step's row once per link, its samples take `history` of them
@@ -568,11 +650,12 @@ def build_dataset(
     trajectory_dir, # The `trajectories_<seed>.npz` of `collect_trajectories`
     seeds, # The layouts to use
     history: int = 4, # Past gains the transmitter knows
-    fading: str | None = None, # None, or 'rayleigh'
-    fading_correlation: float = 0.95, # Of the fading while both agents stand still
+    fading: str | None = None, # None, or 'rician' (`link_samples`')
+    fading_correlation: float = 0.9, # ρ of the fading while both agents stand still
     symmetric: bool = True, # Average the two directions of each traced pair
     seed: int = 0, # Seed of the fading
     steps: bool = False, # Also each sample's past steps (`S`, `link_samples`')
+    channel: str = 'coherent', # coherent, or large_scale (`ChannelTable.gain`)
 ) -> dict:
     "`link_samples` of every episode in the layouts of `seeds`, concatenated, with each sample's `layout` and `episode`."
     parts = []
@@ -581,7 +664,7 @@ def build_dataset(
         z = np.load(Path(trajectory_dir) / f'trajectories_{layout}.npz')
         rng = np.random.default_rng([seed, int(layout)])
         for e, (cells, dirs) in enumerate(zip(z['cells'], z['dirs'])):
-            s = link_samples(table, cells, dirs, history, fading, fading_correlation, rng, steps)
+            s = link_samples(table, cells, dirs, history, fading, fading_correlation, rng, steps, channel)
             s['layout'] = np.full(len(s['gain']), int(layout))
             s['episode'] = np.full(len(s['gain']), e)
             parts.append(s)

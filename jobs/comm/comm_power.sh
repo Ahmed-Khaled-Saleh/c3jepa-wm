@@ -32,7 +32,7 @@
 #   (shard.index / shard.count come from the array)
 
 STAGE=${STAGE:-all}
-DATA_DIR=${DATA_DIR:-/scratch/project_2009050/datasets/findgoal/comm_power}
+DATA_DIR=${DATA_DIR:-/scratch/project_2009050/datasets/findgoal/comm_power_1m}   # 1 m cells, thin walls (comm_power: the 2 m traces)
 WANDB_MODE=${WANDB_MODE:-online}          # offline if the compute nodes can't reach wandb.ai: then `wandb sync $DATA_DIR/wandb/offline-run-*`
 EXTRA=${EXTRA:-}
 

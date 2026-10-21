@@ -19,11 +19,11 @@ from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link,
 from .sequence import fit_model, predictor_name
 
 # %% auto #0
-__all__ = ['LEARNED', 'past_gains', 'fit_baselines', 'baselines', 'prediction_errors', 'operating_points', 'frontier',
-           'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread', 'transmissions', 'received',
-           'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis', 'compare_network',
-           'network_summary', 'estimates', 'snr_sweep', 'evaluate_power_control', 'summary', 'guarantee_summary',
-           'plot_frontiers', 'snr_summary', 'plot_snr']
+__all__ = ['LEARNED', 'PSI_FLOOR', 'past_gains', 'fit_baselines', 'baselines', 'prediction_errors', 'operating_points',
+           'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread', 'transmissions',
+           'received', 'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis',
+           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'evaluate_power_control', 'summary',
+           'guarantee_summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -47,12 +47,15 @@ def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: i
                 extra={predictor_name(s.get('kind', 'trees'), s.get('quantile', 0.05), s.get('steps', False)): fit_model(train, **s)
                        for s in extra})
 
+PSI_FLOOR = 1e-30                                                   # eq. 25's projection: 0 would ask for infinite power,
+                                                                    # a floor asks for ρ_max at τ = ∞, as the analysis sends it
+
 def baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, fitted: dict | None = None) -> dict:
     """name -> predict(dataset) -> ĝ: C3-WM's predictor (in |h|², and in dB), a history-only quantile model, the
     geometry + history mean, the `extra` predictors of `fitted`, and perfect CSI; fit on `train` (or `fitted`)."""
     f = fitted if fitted is not None else fit_baselines(train, history, quantile, max_iter)
     return {
-        "C3-WM's (linear in |h|²)": lambda d: np.array([max(f['psi'](p), 0.0) for p in past_gains(d, history)]),
+        "C3-WM's (linear in |h|²)": lambda d: np.array([max(f['psi'](p), PSI_FLOOR) for p in past_gains(d, history)]),
         "C3-WM's, in dB": lambda d: np.array([f['psi_db'](p) for p in past_gains(d, history)]),
         'history quantile': lambda d: 10 ** (f['history_model'].predict(d['X'][:, 3:]) / 10),
         'geometry + history mean': lambda d: predict_on(f['mean_model'], d),
@@ -199,10 +202,11 @@ def received(estimate, gain, g_min: float, margin_db: float, tau_db: float, snr_
 from comm_core import Fading
 
 class TableFading(Fading):
-    "The channel between the nodes' cells from a `ChannelTable`, times a fading factor |g|² per pair of nodes (`fades`, default 1)."
+    """The channel between the nodes' cells from a `ChannelTable` (its `channel`: coherent, or large_scale), times a
+    fading factor |g|² per pair of nodes (`fades`, default 1)."""
 
-    def __init__(self, table: ChannelTable):
-        self.table, self.node_positions, self.fades = table, {}, {}
+    def __init__(self, table: ChannelTable, channel: str = 'coherent'):
+        self.table, self.channel, self.node_positions, self.fades = table, channel, {}, {}
 
     def set_positions(self, positions):
         "Where the nodes are now: {node: (x, y)}."
@@ -213,7 +217,7 @@ class TableFading(Fading):
         if a == b:
             return math.inf
         fade = self.fades.get(tuple(sorted((transmission.sender, transmission.receiver))), 1.0)
-        return complex(math.sqrt(self.table.gain(a, b) * fade))
+        return complex(math.sqrt(self.table.gain(a, b, self.channel) * fade))
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #24d7391e
 def network_methods(
@@ -228,7 +232,8 @@ def network_methods(
     b, L = saved['budget'], saved['history']
     snr, rho = b.snr_target_db, b.max_power_w
     def predicted(psi, margin):
-        return lambda walls, positions, headings: PredictedChannelInversion(psi, L, snr, fallback_power=rho, margin_db=margin)
+        floored = lambda past: max(psi(past), PSI_FLOOR)                  # as the analysis's (eq. 25)
+        return lambda walls, positions, headings: PredictedChannelInversion(floored, L, snr, fallback_power=rho, margin_db=margin)
     def learned(model, margin, geometry=True):
         return lambda walls, positions, headings: LearnedChannelInversion(model, walls, positions, headings, L, snr, margin,
                                                                           rho, geometry)
@@ -271,12 +276,13 @@ def run_network(
     layout_dir, # The layouts' channels (`table_path`)
     trajectory_dir, # The `trajectories_<seed>.npz`
     seeds, # The layouts
-    fading: str | None = None, # As in the data: None, or 'rayleigh'
-    fading_correlation: float = 0.95,
+    fading: str | None = None, # As in the data: None, or 'rician'
+    fading_correlation: float = 0.9,
     symmetric: bool = True, # Full tables: average the two directions
     message_bits: int = 392, # Per message
     bits_per_token: int = 8, # Per token: a codebook of 2**bits_per_token
     seed: int = 0, # As `build_dataset`'s (the fading's draws)
+    channel: str = 'coherent', # As in the data: coherent, or large_scale
     skip: int | None = None, # The steps of each episode not judged (as the data's: the history it was built with); None: the history
 ) -> dict:
     """`network_metrics` of one method through C3-WM's link as blocks, on the trajectories of `seeds` (after each
@@ -290,22 +296,22 @@ def run_network(
         table = ChannelTable(table_path(layout_dir, layout), symmetric=symmetric)
         z = np.load(Path(trajectory_dir) / f'trajectories_{layout}.npz')
         agents = [f'agent_{i}' for i in range(z['cells'].shape[2])]
-        channel = TableFading(table)
+        fading_channel = TableFading(table, channel)
         fading_rng = np.random.default_rng([seed, int(layout)])        # as build_dataset's
         heads = {}
-        control = method['make'](table.walls, lambda: channel.node_positions, lambda: heads)
-        backend = PipelineBackend(c3wm_link(channel, control, budget.max_power_w, method['tau_db'], bits_per_token, method['crc']),
+        control = method['make'](table.walls, lambda: fading_channel.node_positions, lambda: heads)
+        backend = PipelineBackend(c3wm_link(fading_channel, control, budget.max_power_w, method['tau_db'], bits_per_token, method['crc']),
                                   noise_power=budget.noise_w)
         net = Network([Node(a) for a in agents], FullMeshTopology(agents), IdealProtocol(), backend)
         for cells, dirs in zip(z['cells'], z['dirs']):
             net.reset(seed=int(rng.integers(2 ** 31)))
-            channel.node_positions.clear()
-            fades = episode_fading(cells, fading_rng, fading_correlation) if fading == 'rayleigh' else {}
+            fading_channel.node_positions.clear()
+            fades = episode_fading(cells, fading_rng, fading_correlation, table) if fading == 'rician' else {}
             for t in range(len(cells)):
                 if (cells[t, :, 0] < 0).any():                     # an agent reached the goal, or the episode ended
                     break
                 backend.set_positions({a: tuple(int(v) for v in c) for a, c in zip(agents, cells[t])})
-                channel.fades = {(agents[i], agents[j]): f[t] for (i, j), f in fades.items()}
+                fading_channel.fades = {(agents[i], agents[j]): f[t] for (i, j), f in fades.items()}
                 heads.update({a: int(d) for a, d in zip(agents, dirs[t])})
                 for a in agents:
                     for b in agents:
@@ -340,7 +346,7 @@ def compare_network(
     fitted: dict | None = None, # `fit_baselines`' result (None: fit on `data['train']`)
     quantile: float = 0.05, # Of the history-only baseline, if fit here
     max_iter: int = 400, # Of the history-only baseline, if fit here
-    **network, # `run_network`'s options: fading, fading_correlation, symmetric, message_bits, bits_per_token, seed, skip
+    **network, # `run_network`'s options: fading, fading_correlation, symmetric, message_bits, bits_per_token, seed, channel, skip
 ) -> dict:
     "name -> the method's κ, τ, CRC, and its `network` metrics next to its `analysis` on the same layouts."
     fitted = fitted if fitted is not None else fit_baselines(data['train'], saved['history'], quantile, max_iter)

@@ -30,7 +30,8 @@ from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 
-from c3jepa_wm.comm.channel_data import build_dataset, collect_trajectories, trace_layouts, trace_visited_pairs, with_history
+from c3jepa_wm.comm.channel_data import (build_dataset, collect_trajectories, fading_correlation, trace_layouts, trace_visited_pairs,
+                                         with_history)
 from c3jepa_wm.comm.deployment import (deployment_layouts, deployment_summary, deployment_table, evaluate_deployment,
                                        layout_edits_of, load_deployment, plot_deployment, save_deployment)
 from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_control, fit_baselines, guarantee_summary,
@@ -129,6 +130,14 @@ def select_device(device: str) -> str:
 
 
 # --------------------------------------------------------------------------------------------- the data
+def _rho(cfg) -> float:
+    "The small-scale fading's ρ between steps while both agents stand still: `link.fading_correlation`, or from the Doppler."
+    link = cfg.link
+    if link.get('fading_correlation') is not None:
+        return float(link.fading_correlation)
+    return fading_correlation(link.step_seconds, link.doppler_hz)
+
+
 def _history_data(cfg) -> int:
     "The past gains the data is built with: `link.history_data` (at least `link.history`), or `link.history`."
     link = cfg.link
@@ -144,8 +153,8 @@ def _per_layout(cfg, data, layouts, seed) -> dict:
     a predictor reads them."""
     link = cfg.link
     return {k: with_history(build_dataset(data / 'layouts', data / 'trajectories', [k], history=_history_data(cfg),
-                                          fading=link.fading, fading_correlation=link.fading_correlation,
-                                          symmetric=link.symmetric, seed=seed, steps=_needs_steps(cfg)), link.history)
+                                          fading=link.fading, fading_correlation=_rho(cfg), symmetric=link.symmetric,
+                                          seed=seed, steps=_needs_steps(cfg), channel=link.channel), link.history)
             for k in layouts}
 
 
@@ -298,8 +307,8 @@ def network(cfg, data, saved, sets, comparison, fitted, layouts, seed) -> dict:
     "`compare_network` for each of `evaluation.network_targets`, on `layouts`."
     e = cfg.evaluation
     return {float(t): compare_network(saved, sets, data / 'layouts', data / 'trajectories', layouts, comparison=comparison,
-                                      target=float(t), fitted=fitted, fading=cfg.link.fading,
-                                      fading_correlation=cfg.link.fading_correlation, symmetric=cfg.link.symmetric,
+                                      target=float(t), fitted=fitted, fading=cfg.link.fading, channel=cfg.link.channel,
+                                      fading_correlation=_rho(cfg), symmetric=cfg.link.symmetric,
                                       message_bits=e.message_bits, bits_per_token=e.bits_per_token, seed=seed,
                                       skip=_history_data(cfg))
             for t in e.network_targets}

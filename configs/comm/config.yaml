@@ -3,7 +3,7 @@
 #   python comm_power.py                                               # every stage (jobs/comm/comm_power.sh)
 #   python comm_power.py stage=collect
 #   python comm_power.py stage=trace shard.index=0 shard.count=10      # one of 10 tracing jobs
-#   python comm_power.py stage=train link.fading=rayleigh calibration.target=0.99
+#   python comm_power.py stage=train link.fading=null calibration.target=0.99
 #   python comm_power.py stage=evaluate monte_carlo.runs=20
 #   python comm_power.py env.variations=[] data_dir=./comm_data_fixed  # the layouts with FindGoal's fixed numbers of walls
 defaults:
@@ -31,8 +31,13 @@ tracing:                       # Sionna RT
   device: cuda                 # cuda (fails if no GPU is visible: no silent CPU fallback) | cpu
   mode: pairs                  # pairs: the pairs of cells the trajectories visit (collect first); full: every pair
   frequency: 2.4e9
-  max_depth: 5                 # reflections per path
-  scene: {}                    # SceneConfig fields, e.g. {materials: {inner_wall: brick}}
+  max_depth: 8                 # interactions per path (reflections, refractions: through a wall, two): 8 reaches every servable
+                               # link within 1 dB of 12 (5 missed some), on one layout's 80 links
+  scene:                       # SceneConfig fields, e.g. {materials: {inner_wall: brick}}
+    cell_size: 1.0             # metres per cell: a 15 × 15 grid is a 15 m × 15 m floor, a step at most 1 m
+    thickness:                 # per face of a wall solid (a ray through a wall crosses two): 0.2 m of brick, 0.3 m of concrete
+      inner_wall: 0.1
+      outer_wall: 0.15
   solver: {}                   # trace_paths / PathSolver options, e.g. {batch: 8, samples_per_src: 4000000}
   overwrite: false             # full: trace again the layouts already traced (pairs are only ever added)
 
@@ -50,13 +55,19 @@ rollouts:                      # the movement in the data should be the movement
 link:
   snr_target_db: 10.0          # Γ
   noise_dbm: -94.0             # σ²
-  max_power_dbm: 20.0          # ρ_max
+  max_power_dbm: -10.0         # ρ_max: g_min = Γσ²/ρ_max = -74 dB, about 20% of the 1 m, thin-wall scene's links unservable
+                               # (20 dBm with the 2 m traces of cell-thick walls)
   history: 4                   # past gains the transmitter knows (L)
   history_data: null           # build the data with this many past gains (≥ history), the predictors using the `history` most
                                # recent: runs with different histories are judged on the same transmissions (a link's first
                                # history_data steps are left out); null: history
-  fading: null                 # null, or rayleigh on top of the traced channel
-  fading_correlation: 0.95     # of the fading while both agents stand still
+  channel: large_scale         # coherent: the paths' amplitudes added at the cell's centre (one small-scale draw, frozen);
+                               # large_scale: their powers added (path loss, shadowing), the small-scale fading below
+  fading: rician               # null, or rician on the large-scale channel: K from the direct path, drawn again when an agent
+                               # moves, drifting while both stand still
+  step_seconds: 1.0            # an env step's duration: 1 m/s at most
+  doppler_hz: 0.1              # the environment's Doppler while the agents stand still (people walking by, doors)
+  fading_correlation: null     # ρ between steps while both stand still; null: J₀(2π doppler_hz step_seconds)
   symmetric: true              # average the two traced directions of each pair (the channel is reciprocal)
   seed: 0                      # the fading's draws and the network's payloads (run r of the Monte Carlo: seed + r)
 
