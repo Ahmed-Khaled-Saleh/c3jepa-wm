@@ -31,8 +31,9 @@ tracing:                       # Sionna RT
   device: cuda                 # cuda (fails if no GPU is visible: no silent CPU fallback) | cpu
   mode: pairs                  # pairs: the pairs of cells the trajectories visit (collect first); full: every pair
   frequency: 2.4e9
-  max_depth: 8                 # interactions per path (reflections, refractions: through a wall, two): 8 reaches every servable
-                               # link within 1 dB of 12 (5 missed some), on one layout's 80 links
+  max_depth: 16                # interactions per path (reflections, refractions: through a wall, two). On the 2 m scene, 8
+                               # already reached every servable link within 1 dB of 12 (5 missed some); on the 1 m, thin-wall
+                               # one, with more paths, 16, still cheap on a GPU (one layout's ~800 pairs: ~15 s at 12)
   scene:                       # SceneConfig fields, e.g. {materials: {inner_wall: brick}}
     cell_size: 1.0             # metres per cell: a 15 × 15 grid is a 15 m × 15 m floor, a step at most 1 m
     thickness:                 # per face of a wall solid (a ray through a wall crosses two): 0.2 m of brick, 0.3 m of concrete
