@@ -371,10 +371,16 @@ def metrics(comparison: dict) -> list:
         for part, m in r.get('motion', {}).items():                       # after a move, and while both stood still
             rows += [(name, None, f'motion/{part}/{k}', m['prediction'][k]) for k in ('bias_db', 'spread_db')]
             rows += [(name, t, f'motion/{part}/{k}', o[k]) for t, o in m['targets'].items() for k in ('reliability', 'power')]
-    for t, o in comparison.get('optimal', {}).items():                  # Proposition 1's policy, knowing L and the fading's law
-        rows += [(OPTIMAL, t, k, o[k]) for k in ('reliability', 'power', 'withheld')]
-        rows += [(OPTIMAL, t, f'motion/{part}/{k}', m[k]) for part, m in o['motion'].items() for k in ('reliability', 'power')]
+    for name, by_target in _policies(comparison).items():                # Proposition 1's policy: the oracle's, the predicted ones
+        for t, o in by_target.items():
+            rows += [(name, t, k, o[k]) for k in ('reliability', 'power', 'withheld')]
+            rows += [(name, t, f'motion/{part}/{k}', m[k]) for part, m in o['motion'].items() for k in ('reliability', 'power')]
     return rows
+
+
+def _policies(comparison: dict) -> dict:
+    "name -> per target the λ-policy's results: the optimal policy (oracle), and each distributional predictor's."
+    return {**({OPTIMAL: comparison['optimal']} if 'optimal' in comparison else {}), **comparison.get('distributional', {})}
 
 
 def guarantee_mc_summary(agg: list, targets) -> str:
@@ -552,14 +558,18 @@ def main(cfg: DictConfig):
         motion = [[n, part, m['share'], m['prediction']['bias_db'], m['prediction']['spread_db'], t, o['reliability'], o['power'],
                    o['withheld']] for n, r in comparison['predictors'].items() for part, m in r.get('motion', {}).items()
                   for t, o in m['targets'].items()]
-        motion += [[OPTIMAL, part, m['share'], None, None, t, m['reliability'], m['power'], m['withheld']]
-                   for t, o in comparison.get('optimal', {}).items() for part, m in o['motion'].items()]
+        motion += [[n, part, m['share'], None, None, t, m['reliability'], m['power'], m['withheld']]
+                   for n, by_target in _policies(comparison).items() for t, o in by_target.items() for part, m in o['motion'].items()]
         if motion:
             log.table('evaluate/motion', ['predictor', 'part', 'share', 'bias_db', 'spread_db', 'target', 'reliability', 'power',
                                           'withheld'], motion)
         if comparison.get('optimal'):
             log.table('evaluate/optimal', ['target', 'reliability', 'power', 'withheld', 'lambda'],
                       [[t, o['reliability'], o['power'], o['withheld'], o['lam']] for t, o in comparison['optimal'].items()])
+        if comparison.get('distributional'):
+            log.table('evaluate/distributional', ['method', 'target', 'reliability', 'power', 'withheld', 'lambda'],
+                      [[n, t, o['reliability'], o['power'], o['withheld'], o['lam']]
+                       for n, by_target in comparison['distributional'].items() for t, o in by_target.items()])
         if comparison.get('layout_coverage'):
             logger.info('\n' + guarantee_summary(comparison))
             log.table('evaluate/over_layouts', ['predictor', 'target', 'reliability', 'power', 'withheld', 'margin_db', 'tau_db',

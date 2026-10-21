@@ -19,13 +19,14 @@ from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link,
 from .sequence import fit_model, predictor_name
 
 # %% auto #0
-__all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'PSI_FLOOR', 'OPTIMAL', 'OUTAGES', 'past_gains', 'rician_quantile',
-           'rician_tail', 'DecomposedPredictor', 'fit_decomposed', 'fit_baselines', 'baselines', 'prediction_errors',
+__all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'LEVELS', 'QUANTILE_LEVELS', 'DISTRIBUTIONAL', 'PSI_FLOOR', 'OPTIMAL',
+           'OUTAGES', 'past_gains', 'rician_quantile', 'rician_tail', 'DecomposedPredictor', 'fit_decomposed',
+           'MeanSpread', 'QuantileSet', 'fit_distributional', 'fit_baselines', 'baselines', 'prediction_errors',
            'operating_points', 'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread',
            'transmissions', 'received', 'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis',
-           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'optimal_reference',
-           'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary',
-           'plot_snr']
+           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'lagrangian_policy', 'optimal_reference',
+           'distributional_policies', 'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary',
+           'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -90,22 +91,112 @@ def fit_decomposed(train: dict, quantile: float = 0.05, max_iter: int = 400) -> 
                                            random_state=0).fit(train['X'], train['direct'])
     return DecomposedPredictor(large, direct, quantile)
 
-def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, extra=()) -> dict:
+LEVELS = np.array([0.002, 0.005, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.9])   # outages of the distributions
+QUANTILE_LEVELS = np.array([0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.9])                  # `QuantileSet`'s models
+
+def _candidates(data: dict, predict) -> np.ndarray:
+    "`predict` (rows of features -> values) on each sample's candidate receiver cells: (samples, candidates), NaN where none."
+    n, k, F = data['X_possible'].shape
+    v = np.asarray(predict(data['X_possible'].reshape(n * k, F)), float).reshape(n, k)
+    return np.where(data['possible_mask'], v, np.nan)
+
+def _row_cdf(x: np.ndarray, xp: np.ndarray, fp: np.ndarray) -> np.ndarray:
+    """Per row, the CDF at `x` (samples,) from its quantiles `xp` (samples, levels; increasing) at the levels `fp`:
+    linear in between, `fp[0]` below the lowest, 1 above the highest (both pessimistic for the success at ρ_max)."""
+    K, rows = xp.shape[1], np.arange(len(x))
+    k = (xp <= x[:, None]).sum(1)
+    lo, hi = np.clip(k - 1, 0, K - 1), np.clip(k, 0, K - 1)
+    x0, x1 = xp[rows, lo], xp[rows, hi]
+    w = np.where(x1 > x0, (x - x0) / np.where(x1 > x0, x1 - x0, 1), 0.0)
+    f = fp[lo] + w * (fp[hi] - fp[lo])
+    return np.where(k == 0, fp[0], np.where(k == K, 1.0, f))
+
+class MeanSpread:
+    """A distribution of the gain (dB) per transmission: the mean predictor's μ, an error-size predictor's σ (trees on
+    |Ḡ - μ|), and the shape of the normalized error (Ḡ - μ)/σ on the calibration layouts (`calibrate`); on the receiver's
+    candidate cell of least μ."""
+
+    def __init__(self, mean, spread, levels=LEVELS):
+        self.mean, self.spread, self.levels, self.errors = mean, spread, np.asarray(levels, float), None
+
+    def _pessimistic(self, data: dict) -> tuple:
+        mu = _candidates(data, self.mean.predict)
+        sd = _candidates(data, lambda X: np.maximum(self.spread.predict(X), 0.1))
+        i = np.nanargmin(mu, axis=1)
+        rows = np.arange(len(i))
+        return mu[rows, i], sd[rows, i]
+
+    def calibrate(self, cal: dict):
+        mu, sd = self._pessimistic(cal)
+        self.errors = np.sort((db(cal['gain']) - mu) / sd)
+        return self
+
+    def quantiles(self, data: dict) -> np.ndarray:
+        "The gain's quantiles (dB) at `levels`: (samples, levels)."
+        mu, sd = self._pessimistic(data)
+        return mu[:, None] + sd[:, None] * np.quantile(self.errors, self.levels)[None, :]
+
+    def cdf(self, data: dict, g_db: float) -> np.ndarray:
+        "P(Ḡ ≤ g_db) per transmission."
+        mu, sd = self._pessimistic(data)
+        return np.searchsorted(self.errors, (g_db - mu) / sd, side='right') / len(self.errors)
+
+class QuantileSet:
+    """A distribution of the gain (dB) per transmission: trees for its quantiles at `levels` (the pinball loss), the
+    lowest over the receiver's candidate cells, each shifted on the calibration layouts so that a fraction 1 - q of the
+    gains is above it (`calibrate`: conformalized per level), sorted where they cross."""
+
+    def __init__(self, models: dict):
+        self.models, self.levels, self.shift = models, np.array(sorted(models)), None
+
+    def _raw(self, data: dict) -> np.ndarray:
+        return np.stack([np.nanmin(_candidates(data, self.models[q].predict), axis=1) for q in self.levels], axis=1)
+
+    def calibrate(self, cal: dict):
+        err = self._raw(cal) - db(cal['gain'])[:, None]
+        self.shift = np.array([np.quantile(err[:, k], 1 - q) for k, q in enumerate(self.levels)])
+        return self
+
+    def quantiles(self, data: dict) -> np.ndarray:
+        return np.sort(self._raw(data) - self.shift[None, :], axis=1)
+
+    def cdf(self, data: dict, g_db: float) -> np.ndarray:
+        q = self.quantiles(data)
+        return _row_cdf(np.full(len(q), g_db), q, self.levels)
+
+def fit_distributional(train: dict, mean_model=None, max_iter: int = 400, quantile_levels=QUANTILE_LEVELS) -> dict:
+    "name -> the distributional predictors (`MeanSpread`, `QuantileSet`) fit on `train` (to calibrate on the calibration layouts)."
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    mean = mean_model if mean_model is not None else fit_predictor(train['X'], train['gain'], None, max_iter)
+    spread = HistGradientBoostingRegressor(max_iter=max_iter, learning_rate=0.05, early_stopping=False, random_state=0).fit(
+        train['X'], np.abs(db(train['gain']) - mean.predict(train['X'])))
+    return {DISTRIBUTIONAL[0]: MeanSpread(mean, spread),
+            DISTRIBUTIONAL[1]: QuantileSet({float(q): fit_predictor(train['X'], train['gain'], float(q), max_iter)
+                                            for q in quantile_levels})}
+
+DISTRIBUTIONAL = ('mean + spread, λ-policy', 'quantiles, λ-policy')
+
+def fit_baselines(train: dict, history: int, quantile: float = 0.05, max_iter: int = 400, extra=(),
+                  distributional: bool = True) -> dict:
     """The baselines' models, fit on `train`: C3-WM's `Ψ` (linear in |h|², eq. 24: `psi`), the same fit in dB (`psi_db`),
     a quantile model of the history alone, the past gains and the moves (`history_model`), and the learned model's
     features (geometry + history) fit for the mean gain in dB (`mean_model`); on the large-scale channel, the
-    `DecomposedPredictor` (`decomposed`); and the predictors of `extra`
+    `DecomposedPredictor` (`decomposed`); with `distributional`, `fit_distributional`'s (`distributional`); and the
+    predictors of `extra`
     (`extra`: name -> model), each a dict of `comm.sequence.fit_model`'s options (kind, quantile, steps, trees,
     sequence), named by `predictor_name`."""
     from comm_core import fit_gain_predictor
     sequences = [np.r_[p[::-1], g] for p, g in zip(past_gains(train, history), train['gain'])]
-    return dict(psi=fit_gain_predictor(sequences, history=history),
+    out = dict(psi=fit_gain_predictor(sequences, history=history),
                 psi_db=fit_gain_predictor(sequences, history=history, domain='db'),
                 history_model=fit_predictor(train['X'][:, 3:], train['gain'], quantile, max_iter),
                 mean_model=fit_predictor(train['X'], train['gain'], None, max_iter),
                 extra={predictor_name(s.get('kind', 'trees'), s.get('quantile', 0.05), s.get('steps', False)): fit_model(train, **s)
                        for s in extra},
                 **({'decomposed': fit_decomposed(train, quantile, max_iter)} if 'large_scale' in train else {}))
+    if distributional:
+        out['distributional'] = fit_distributional(train, out['mean_model'], max_iter)
+    return out
 
 PSI_FLOOR = 1e-30                                                   # eq. 25's projection: 0 would ask for infinite power,
                                                                     # a floor asks for ρ_max at τ = ∞, as the analysis sends it
@@ -519,6 +610,42 @@ def _optimal_choice(options: tuple, lam: float) -> np.ndarray:
     best = cost[np.arange(len(k)), k]
     return np.where(best < 0, power[np.arange(len(k)), k], 0.0)
 
+def _judged(power: np.ndarray, data: dict, g_min: float, keep=None) -> dict:
+    "Reliability (of the servable), power (× perfect CSI's) and withheld share of powers in units of Γσ² (0: withheld)."
+    keep = np.ones(len(power), bool) if keep is None else keep
+    g, p = data['gain'][keep], power[keep]
+    servable = g >= g_min
+    reached = (p > 0) & (p * g >= 1 - 1e-9)
+    return dict(reliability=float(reached[servable].mean()), power=float(p.mean() / np.where(servable, 1 / g, 0).mean()),
+                withheld=float((p == 0).mean()))
+
+def lagrangian_policy(
+    cal_options: tuple, test_options: tuple, # `_optimal_choice`'s options (powers, success probabilities) per transmission
+    cal: dict, test: dict, # The transmissions they are of (`build_dataset`'s)
+    g_min: float, # The weakest servable gain
+    targets=(0.9, 0.95, 0.99), # Reliability targets
+    slack: float = 0.0, # λ chosen for target + slack
+) -> dict:
+    """Proposition 1's policy on the options: per transmission the power minimizing power - λ P(success), or none, λ the
+    smallest whose reliability on the calibration transmissions reaches `target` + `slack`. Per target: λ, and on the
+    test transmissions the reliability, power (× perfect CSI's) and withheld share, also after a move and while still
+    (`motion`, on the large-scale channel)."""
+    scale = float(np.mean(1 / cal['gain'][cal['gain'] >= g_min]))
+    parts = (('moved', test['fresh']), ('still', ~test['fresh'])) if 'fresh' in test else ()
+    out = {}
+    for target in targets:
+        lo, hi = -4.0, 8.0                                        # log10 of λ over the mean perfect-CSI power
+        for _ in range(48):
+            mid = (lo + hi) / 2
+            if _judged(_optimal_choice(cal_options, scale * 10 ** mid), cal, g_min)['reliability'] >= target + slack:
+                hi = mid
+            else:
+                lo = mid
+        power = _optimal_choice(test_options, scale * 10 ** hi)
+        out[target] = dict(lam=scale * 10 ** hi, **_judged(power, test, g_min),
+                           motion={part: dict(share=float(m.mean()), **_judged(power, test, g_min, m)) for part, m in parts if m.any()})
+    return out
+
 def optimal_reference(
     cal: dict, test: dict, # `build_dataset`'s, on the large-scale channel
     g_min: float, # The weakest servable gain
@@ -526,32 +653,32 @@ def optimal_reference(
     slack: float = 0.0, # λ chosen for target + slack
     outages=OUTAGES, # The outages each transmission chooses from (and ρ_max)
 ) -> dict:
-    """The cheapest policy for the reliability on average (Proposition 1's), knowing what `REFERENCES[1]` knows: the
-    power minimizing power - λ P(success) per transmission, λ the smallest reaching `target` on the calibration
-    layouts. Per target: λ, and on the test layouts the reliability, power (× perfect CSI's) and withheld share, also
-    after a move and while still (`motion`)."""
-    def judged(power, data, keep=None):
-        keep = np.ones(len(power), bool) if keep is None else keep
-        g, p = data['gain'][keep], power[keep]
-        servable = g >= g_min
-        reached = (p > 0) & (p * g >= 1 - 1e-9)
-        return dict(reliability=float(reached[servable].mean()), power=float(p.mean() / np.where(servable, 1 / g, 0).mean()),
-                    withheld=float((p == 0).mean()))
-    c_opt, t_opt = _optimal_options(cal, g_min, outages), _optimal_options(test, g_min, outages)
-    scale = float(np.mean(1 / cal['gain'][cal['gain'] >= g_min]))
+    """The cheapest policy for the reliability on average (Proposition 1's), knowing what `REFERENCES[1]` knows:
+    `lagrangian_policy` on the true distribution of each gain given the steps before."""
+    return lagrangian_policy(_optimal_options(cal, g_min, outages), _optimal_options(test, g_min, outages), cal, test,
+                             g_min, targets, slack)
+
+def _distribution_options(dist, data: dict, g_min: float) -> tuple:
+    """Each transmission's options from a predicted distribution (`MeanSpread`, `QuantileSet`): the power reaching each of
+    its quantiles, with success probability 1 - q (`inf` beyond ρ_max), and ρ_max with its predicted success probability."""
+    power = 10 ** (-dist.quantiles(data) / 10)
+    success = np.broadcast_to(1 - dist.levels, power.shape)
+    power = np.where(power <= 1 / g_min, power, np.inf)
+    cap = 1 - dist.cdf(data, float(db(g_min)))
+    return np.c_[power, np.full(len(power), 1 / g_min)], np.c_[success, cap]
+
+def distributional_policies(
+    fitted: dict, # `fit_baselines`' result, with `distributional`
+    cal: dict, test: dict, # `build_dataset`'s
+    g_min: float, targets=(0.9, 0.95, 0.99), slack: float = 0.0,
+) -> dict:
+    """name -> `lagrangian_policy` on each distributional predictor's distributions, calibrated (its shape or its
+    quantiles) and λ chosen on the calibration transmissions."""
     out = {}
-    for target in targets:
-        lo, hi = -4.0, 8.0                                        # log10 of λ over the mean perfect-CSI power
-        for _ in range(48):
-            mid = (lo + hi) / 2
-            if judged(_optimal_choice(c_opt, scale * 10 ** mid), cal)['reliability'] >= target + slack:
-                hi = mid
-            else:
-                lo = mid
-        power = _optimal_choice(t_opt, scale * 10 ** hi)
-        out[target] = dict(lam=scale * 10 ** hi, **judged(power, test),
-                           motion={part: dict(share=float(m.mean()), **judged(power, test, m))
-                                   for part, m in (('moved', test['fresh']), ('still', ~test['fresh'])) if m.any()})
+    for name, dist in fitted.get('distributional', {}).items():
+        dist.calibrate(cal)
+        out[name] = lagrangian_policy(_distribution_options(dist, cal, g_min), _distribution_options(dist, test, g_min),
+                                      cal, test, g_min, targets, slack)
     return out
 
 def evaluate_power_control(
@@ -574,7 +701,8 @@ def evaluate_power_control(
     """Prediction errors, operating points, frontiers and what the agents receive, for the learned predictor and the
     baselines; with `layout_coverage`, also each one's operating points with κ and τ chosen over layouts
     (`layout_targets`); on the large-scale channel, the same κ and τ on the transmissions after a move and while both
-    agents stood still apart (`motion`), and `optimal_reference`'s policy (`optimal`)."""
+    agents stood still apart (`motion`), `optimal_reference`'s policy (`optimal`), and with `fitted`'s distributional
+    predictors their λ-policies (`distributional`)."""
     budget = saved['budget']
     estimated = estimates(saved, data, compare, quantile, max_iter, fitted)
     test_gain = data['test']['gain']
@@ -614,6 +742,8 @@ def evaluate_power_control(
                layout_coverage=layout_coverage, layout_confidence=layout_confidence)
     if compare and 'large_scale' in data['test']:
         out['optimal'] = optimal_reference(data['calibration'], data['test'], budget.g_min, targets, slack)
+    if compare and fitted is not None and fitted.get('distributional'):
+        out['distributional'] = distributional_policies(fitted, data['calibration'], data['test'], budget.g_min, targets, slack)
     if len(snr_targets_db):
         out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token)
     return out
@@ -632,11 +762,14 @@ def motion_summary(results: dict, target: float) -> str:
         m = results['predictors'][name]['motion']
         lines.append(f"{name:{w}s}" + ''.join(f"{m[p]['prediction']['spread_db']:13.1f} dB {100 * m[p]['targets'][target]['reliability']:6.1f}%"
                                                f"{m[p]['targets'][target]['power']:7.2f}×   " for p in parts))
-    if target in results.get('optimal', {}):
-        o = results['optimal'][target]
-        lines.append(f"{OPTIMAL:{w}s}" + ''.join(f"{'':16s}{100 * o['motion'][p]['reliability']:6.1f}%{o['motion'][p]['power']:7.2f}×   "
-                                                 for p in parts if p in o['motion']))
-        lines.append(f"{OPTIMAL}, all: {100 * o['reliability']:.1f}% reached, {o['power']:.2f}× perfect CSI's power, "
+    policies = {**({OPTIMAL: results['optimal']} if 'optimal' in results else {}), **results.get('distributional', {})}
+    for name, by_target in policies.items():
+        if target not in by_target:
+            continue
+        o = by_target[target]
+        lines.append(f"{name:{w}s}" + ''.join(f"{'':16s}{100 * o['motion'][p]['reliability']:6.1f}%{o['motion'][p]['power']:7.2f}×   "
+                                              for p in parts if p in o['motion']))
+        lines.append(f"{'':4s}all: {100 * o['reliability']:.1f}% reached, {o['power']:.2f}× perfect CSI's power, "
                      f"{100 * o['withheld']:.1f}% withheld")
     return '\n'.join(lines)
 
