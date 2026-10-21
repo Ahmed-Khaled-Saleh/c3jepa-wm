@@ -13,7 +13,7 @@ defaults:
 env:                           # configs/comm/env/findgoal.yaml, with:
   variations: [obstacles.number, clutter.number]   # each layout's numbers of wall blocks (0-12) and single walls (0-20), drawn from its seed
 
-stage: all                     # collect | trace | train | evaluate | all (in this order)
+stage: all                     # collect | trace | train | evaluate | continual | all (in this order; continual if continual.enabled)
 data_dir: ./comm_data          # trajectories/, layouts/ (pairs_<seed>.npz or layout_<seed>.npz), deployment.json
 out_dir: ${data_dir}          # power_control.pkl, results.json, *.png: a directory per run (e.g. ${data_dir}/runs/lstm-steps) lets
                                # runs with other predictors or histories share data_dir's trajectories and layouts
@@ -143,6 +143,33 @@ monte_carlo:                   # fitting + calibration + evaluation again on new
   snr_sweep: false             # the Γ sweep in runs 1.. too
   deployment: true             # the deployment evaluation in runs 1.. too
   seed: 0                      # of the splits
+
+continual:                     # the predictor learning over a stream of layouts met one after another (c3jepa_wm.comm.continual;
+                               # Mohsin et al., ICML 2025): each layout's first episodes learned from, its others judged
+  enabled: true
+  layouts: deployment          # deployment: the deployment layouts, group after group (deployment.groups' order); test: the test layouts
+  order: groups                # groups: in-distribution, then slightly OOD, then OOD, each shuffled; random: all shuffled
+  runs: 3                      # orders of the stream (seed + run); the predictor is pre-trained once, on the training layouts
+  seed: 0
+  update_episodes: 2           # of each layout: learned from (the gains the receivers report), the others sent and judged
+  recalibrate_every: 5         # layouts between choosing κ and τ again on the calibration layouts (1: after every layout)
+  model: {kind: lstm, steps: false, mean: false}   # the learning predictor (lstm | gru; mean: for the mean, else predictor.quantile)
+  methods: [frozen, finetune, replay, lars, ewc, si, lwf, joint]
+  trees: true                  # also the trees: frozen, and fit again on everything seen every trees_every layouts
+  trees_every: 10
+  learning:                    # ContinualLearner's: the paper's settings, the epochs and rate for a few hundred samples a layout
+    capacity: 5000             # replay buffer (replay, lars)
+    epochs: 20                 # over each layout's samples
+    batch_size: 64
+    lr: 5.0e-4
+    replay_weight: 0.5         # of the current layout's loss (replay, lars, joint)
+    ewc: 0.4                   # α
+    si: 0.4                    # β
+    si_xi: 0.1                 # ξ
+    lwf: 0.5                   # λ
+    clip: 1.0                  # gradient norm
+    fisher_samples: 20000      # EWC: at most, per task
+    device: auto
 
 wandb:
   enabled: true

@@ -19,7 +19,8 @@ from .power_control import fit_predictor
 GEOMETRY, MOVES = 3, 2                                              # `features`: the geometry, the past gains, the moves
 
 # %% auto #0
-__all__ = ['GEOMETRY', 'MOVES', 'KINDS', 'SequencePredictor', 'fit_sequence_predictor', 'predictor_name', 'fit_model']
+__all__ = ['GEOMETRY', 'MOVES', 'KINDS', 'SequencePredictor', 'gain_loss', 'fit_sequence_predictor', 'predictor_name',
+           'fit_model']
 
 # %% ../../nbs/09e_comm.sequence.ipynb #e9000006
 def _net(history: int, cell: str, steps: bool, hidden: int, layers: int, head: int, dropout: float):
@@ -53,8 +54,10 @@ class SequencePredictor:
     """A fitted `GainSequenceNet` as a scikit-learn regressor: `predict(X)` (with `steps`, `predict(X, S)`) -> the gain in
     dB. Large batches run on the GPU if there is one; it pickles to the CPU."""
 
-    def __init__(self, config: dict, scale: dict, state: dict, curve: list):
-        self.config, self.scale, self.curve = config, scale, curve
+    def __init__(self, config: dict, scale: dict, state: dict, curve: list, quantile: float | None = None,
+                 importance: dict | None = None):
+        self.config, self.scale, self.curve, self.quantile = config, scale, curve, quantile
+        self.importance = importance                                # SI's per-weight importance over the training (`comm.continual`)
         self._build(state)
 
     @property
@@ -68,6 +71,24 @@ class SequencePredictor:
         self.net = _net(**self.config)
         self.net.load_state_dict(state)
         self.net.eval()
+
+    def scaled(self, X: np.ndarray, S: np.ndarray | None = None) -> tuple:
+        "The standardized features and past steps (float32 arrays), as the network reads them."
+        c = self.scale
+        Z = (np.asarray(X, np.float32) - c['mean']) / c['std']
+        Zs = (np.asarray(S, np.float32)[:, :self.config['history']] - c['step_mean']) / c['step_std'] if self.steps else None
+        return Z, Zs
+
+    def target(self, gain: np.ndarray) -> np.ndarray:
+        "The gains |h|² as the network predicts them: in dB, standardized."
+        c = self.scale
+        return ((10 * np.log10(np.maximum(np.asarray(gain, float), 1e-30)) - c['mean'][GEOMETRY]) / c['std'][GEOMETRY]).astype(np.float32)
+
+    def loaded(self, state: dict):
+        "Its network's weights replaced (by a continual update): on the CPU, the GPU copy made again when needed."
+        self.net.load_state_dict({k: v.detach().cpu() for k, v in state.items()})
+        self.net.eval()
+        self._gpu = None
 
     def predict(
         self,
@@ -85,8 +106,7 @@ class SequencePredictor:
                 self._gpu = copy.deepcopy(self.net).cuda()
             net = self._gpu
         device = next(net.parameters()).device
-        Z = (np.asarray(X, np.float32) - c['mean']) / c['std']
-        Zs = (np.asarray(S, np.float32)[:, :self.config['history']] - c['step_mean']) / c['step_std'] if self.steps else None
+        Z, Zs = self.scaled(X, S)
         out = []
         with torch.no_grad():
             for i in range(0, len(Z), batch_size):
@@ -96,12 +116,21 @@ class SequencePredictor:
         return (y * c['std'][GEOMETRY] + c['mean'][GEOMETRY]).astype(float)   # the target shares the last gain's scale
 
     def __getstate__(self):
-        return dict(config=self.config, scale=self.scale, curve=self.curve,
+        return dict(config=self.config, scale=self.scale, curve=self.curve, quantile=self.quantile, importance=self.importance,
                     state={k: v.detach().cpu() for k, v in self.net.state_dict().items()})
 
     def __setstate__(self, s):
         self.config, self.scale, self.curve = s['config'], s['scale'], s['curve']
+        self.quantile, self.importance = s.get('quantile'), s.get('importance')
         self._build(s['state'])
+
+
+def gain_loss(quantile: float | None):
+    "The training loss on standardized dB: the pinball loss of `quantile`, or the squared error (None: the mean)."
+    if quantile is None:
+        return lambda p, y: ((p - y) ** 2).mean()
+    import torch
+    return lambda p, y: torch.maximum(quantile * (y - p), (quantile - 1) * (y - p)).mean()
 
 # %% ../../nbs/09e_comm.sequence.ipynb #e9000009
 def fit_sequence_predictor(
@@ -124,6 +153,7 @@ def fit_sequence_predictor(
     device: str = 'auto', # 'cpu', 'cuda', or 'auto'
     seed: int = 0,
     verbose: bool = False,
+    si_xi: float = 0.1, # SI's damping: the importance of each weight over this training is kept (`importance`, for `comm.continual`)
 ) -> SequencePredictor:
     "An LSTM or a GRU predicting the gain in dB from the past gains (or, with `S`, the past steps), the geometry and the moves."
     import torch
@@ -160,10 +190,9 @@ def fit_sequence_predictor(
     net = _net(**config).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=max(1, patience // 3))
-    if quantile is None:
-        loss_fn = lambda p, y: ((p - y) ** 2).mean()
-    else:
-        loss_fn = lambda p, y: torch.maximum(quantile * (y - p), (quantile - 1) * (y - p)).mean()
+    loss_fn = gain_loss(quantile)
+    start = {k: p.detach().clone() for k, p in net.named_parameters()}
+    path = {k: torch.zeros_like(p) for k, p in net.named_parameters()}   # SI: Σ g² η over the training
     split = lambda a, m: a[torch.from_numpy(m)].to(device) if a is not None else None
     (Ztr, Zstr, ttr), (Zva, Zsva, tva) = ([split(a, m) for a in (Z, Zs, t)] for m in (~val, val))
     best, best_state, waited, curve = math.inf, None, 0, []
@@ -175,6 +204,10 @@ def fit_sequence_predictor(
             opt.zero_grad()
             loss = loss_fn(net(Ztr[b], Zstr[b] if steps else None), ttr[b])
             loss.backward()
+            eta = opt.param_groups[0]['lr']
+            for k, p in net.named_parameters():
+                if p.grad is not None:
+                    path[k] += p.grad.detach() ** 2 * eta
             opt.step()
         net.eval()
         with torch.no_grad():
@@ -189,7 +222,8 @@ def fit_sequence_predictor(
             waited += 1
             if waited >= patience:
                 break
-    return SequencePredictor(config, scale, best_state, curve)
+    importance = {k: (path[k] / ((best_state[k].to(device) - start[k]) ** 2 + si_xi)).cpu() for k in path}
+    return SequencePredictor(config, scale, best_state, curve, quantile, importance)
 
 # %% ../../nbs/09e_comm.sequence.ipynb #e900000c
 KINDS = ('trees', 'lstm', 'gru')

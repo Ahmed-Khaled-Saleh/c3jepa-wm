@@ -37,6 +37,8 @@ from c3jepa_wm.comm.evaluation import (LEARNED, compare_network, evaluate_power_
                                        layout_summary, network_summary, plot_frontiers, plot_layout_spread, plot_snr, snr_summary,
                                        summary)
 from c3jepa_wm.comm.power_control import Budget, calibrate, evaluate, load_power_control, predict_on, save_power_control
+from c3jepa_wm.comm.continual import (METHOD_COLUMNS, continual_rows, continual_summary, evaluate_continual, plot_continual,
+                                      task_columns)
 from c3jepa_wm.comm.sequence import fit_model, predictor_name
 
 SPLITS = ('train', 'calibration', 'test')
@@ -239,7 +241,28 @@ def _check_saved(cfg, saved: dict):
 
 def _needs_steps(cfg) -> bool:
     "Whether a predictor reads the past steps (then the data has them, `S`)."
-    return bool(cfg.predictor.steps) or any(e['steps'] for e in _extra(cfg))
+    return (bool(cfg.predictor.steps) or any(e['steps'] for e in _extra(cfg))
+            or bool(cfg.continual.enabled and cfg.continual.model.get('steps', False)))
+
+
+def _continual_spec(cfg) -> dict:
+    "The predictor learning over the stream (`continual.model`), as `fit_model`'s arguments."
+    m = cfg.continual.model
+    return dict(kind=m.kind, steps=bool(m.get('steps', False)), quantile=None if m.get('mean', False) else cfg.predictor.quantile,
+                sequence=_options(cfg)['sequence'])
+
+
+def continual(cfg, sets: dict, stream: dict, groups: dict, budget: Budget) -> dict:
+    "`evaluate_continual` with the config's stream, methods and learning (`continual.*`), targets and calibration."
+    c, e = cfg.continual, cfg.evaluation
+    present = set(np.unique(stream['layout']).tolist())
+    groups = {g: [k for k in ids if k in present] for g, ids in groups.items()}
+    return evaluate_continual(sets, stream, {g: ids for g, ids in groups.items() if ids}, budget.g_min, model=_continual_spec(cfg),
+                              methods=tuple(c.methods), trees=dict(trees=_options(cfg)['trees']) if c.trees else None,
+                              trees_every=c.trees_every, order=c.order, runs=c.runs, update_episodes=c.update_episodes,
+                              targets=tuple(float(t) for t in e.targets), taus_db=_taus(cfg), slack=cfg.calibration.slack,
+                              recalibrate_every=c.recalibrate_every, seed=c.seed,
+                              **OmegaConf.to_container(c.learning, resolve=True))
 
 
 def fit_and_calibrate(cfg, sets: dict) -> tuple:
@@ -407,13 +430,14 @@ def main(cfg: DictConfig):
     seeds = _split(cfg, 0)
     every = seeds['train'] + seeds['calibration'] + seeds['test']
     mine = every[cfg.shard.index::cfg.shard.count]
-    stages = ('collect', 'trace', 'train', 'evaluate') if cfg.stage == 'all' else (cfg.stage,)
-    deployment = _deployment(cfg, data, seeds['train']) if {'collect', 'trace', 'evaluate'} & set(stages) else None
+    stages = (('collect', 'trace', 'train', 'evaluate') + (('continual',) if cfg.continual.enabled else ())
+              if cfg.stage == 'all' else (cfg.stage,))
+    deployment = _deployment(cfg, data, seeds['train']) if {'collect', 'trace', 'evaluate', 'continual'} & set(stages) else None
     edits = layout_edits_of(deployment) if deployment else {}
     deployed = [k for ids in deployment['groups'].values() for k in ids] if deployment else []
     mine_deployed = deployed[cfg.shard.index::cfg.shard.count]
-    if cfg.shard.count > 1 and {'train', 'evaluate'} & set(stages):
-        raise ValueError("train and evaluate read every layout: run them once (shard.count=1), after the shards' collect and trace")
+    if cfg.shard.count > 1 and {'train', 'evaluate', 'continual'} & set(stages):
+        raise ValueError("train, evaluate and continual read every layout: run them once (shard.count=1), after the shards' collect and trace")
     budget = _budget(cfg)
     log = Log(cfg)
     log.summary({'layouts/variations': ','.join(cfg.env.get('variations') or []) or 'none',
@@ -632,6 +656,41 @@ def main(cfg: DictConfig):
                          for stat, v in (('mean', m), ('std', s))})
         (outputs / 'results.json').write_text(json.dumps(out, indent=1, default=str))
         log.files('comm-power-results', [outputs / 'results.json', outputs / 'power_control.pkl', *images.values()])
+
+    if 'continual' in stages:                       # the predictor learning over a stream of layouts (c3jepa_wm.comm.continual)
+        start, c = time.time(), cfg.continual
+        sets = sets_of(seeds, cfg.link.seed)
+        if c.layouts == 'deployment':
+            if not deployment:
+                raise ValueError("continual.layouts=deployment needs the deployment layouts (deployment.enabled)")
+            groups = {g: list(ids) for g, ids in deployment['groups'].items()}
+            stream = sets_of({'deployment': deployed}, cfg.link.seed)['deployment']
+        elif c.layouts == 'test':
+            groups, stream = {'test': list(seeds['test'])}, sets['test']
+        else:
+            raise ValueError(f"continual.layouts: deployment or test, not {c.layouts!r}")
+        result = continual(cfg, sets, stream, groups, budget)
+        targets = [float(t) for t in cfg.evaluation.targets]
+        for t in targets:
+            logger.info('\n' + continual_summary(result, t))
+        images = {}
+        for t in targets:
+            path = outputs / f'continual_{100 * t:g}.png'
+            plot_continual(result, t, path)
+            images[f'continual/stream_{100 * t:g}'] = path
+        tasks, methods = continual_rows(result)
+        log.table('continual/tasks', task_columns(result), tasks)
+        log.table('continual/methods', METHOD_COLUMNS, methods)
+        log.images(images)
+        summary_rows = {}
+        for r, m, t, kind, g, rel, power, *_ in methods:
+            if g in ('all', 'test'):
+                summary_rows.setdefault((m, t, kind), []).append((rel, power))
+        log.summary({'continual/predictor': result['predictor'], 'continual/seconds': time.time() - start,
+                     **{f'continual/{m}/{t}/{kind}_{k}_mean': float(np.nanmean([v[i] for v in vs]))
+                        for (m, t, kind), vs in summary_rows.items() for i, k in enumerate(('reliability', 'power'))}})
+        (outputs / 'continual.json').write_text(json.dumps(result, indent=1, default=str))
+        log.files('comm-power-continual', [outputs / 'continual.json', *images.values()])
     log.finish()
 
 
