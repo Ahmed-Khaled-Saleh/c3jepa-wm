@@ -2,7 +2,8 @@
 _target_: c3jepa_wm.data.data_module.WMDataModule # Full python import path to your datamodule class
 
 batch_size: 512
-num_workers: 0
+num_workers: 16                # each worker opens the dataset itself
+persistent_workers: true
 history_size: ${pipeline.history_size} # Automatically grabs 3 from pipeline config!
 img_size: ${pipeline.img_size} # Grabs from pipeline config, which can be overridden by config.yaml
 data_dir: /scratch/project_2009050/datasets/findgoal_layouts   # collect_world.py's dataset (null: the host's old rollouts)

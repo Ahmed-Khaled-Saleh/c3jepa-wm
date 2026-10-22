@@ -7,4 +7,4 @@ num_embeddings: 256
 hidden_dims: [64, 128, 256, 512, 512]
 beta: 1.0
 img_size: 224
-pre_quant_activation: true   # the checkpoints in use (trained before Oct 2026); false for those of pipeline/vqvae_pretrain.yaml now
+pre_quant_activation: false  # the VQ-VAE of pipeline/vqvae_pretrain.yaml (true: the checkpoints trained before Oct 2026)

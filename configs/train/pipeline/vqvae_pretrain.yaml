@@ -10,8 +10,7 @@ stage: 1
 lr: 3e-4
 max_epochs: 50
 
-# The training options of the VQ-VAE (model/vqvae.yaml stays as the checkpoints in use were trained: the other
-# pipelines build the model from it). A checkpoint trained with these needs pre_quant_activation: false where it is loaded.
+# The training options of the VQ-VAE (model/vqvae.yaml, which the other pipelines load it with, has pre_quant_activation false too).
 model:
   beta: 0.25                     # the commitment loss's weight
   pre_quant_activation: false    # the encoder's output quantized as it is

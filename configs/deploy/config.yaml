@@ -61,8 +61,6 @@ pipeline:                        # what the model configs interpolate (configs/t
   msg_embedding_dim: 256
   num_embeddings: 256
 
-vqvae:
-  pre_quant_activation: false    # the VQ-VAE trained with pipeline/vqvae_pretrain.yaml (true: the checkpoints before Oct 2026)
 
 wandb:
   enabled: true

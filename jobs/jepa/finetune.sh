@@ -14,8 +14,9 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
 
 module --force purge
-module load python-pytorch
+module load python-pytorch/2.10
 source /scratch/project_2009050/rl/bin/activate
 cd /projappl/project_2009050/c3jepa-wm/mains/
 
-srun python train.py pipeline=wm_finetune logging_params.project_name="phase-2-wm-finetune" #="jepa_train"
+# JEPA: the blind model of jepa.sh (else get_ckp_path's for the host); VQVAE likewise
+srun python train.py pipeline=wm_finetune logging_params.project_name="phase-2-wm-finetune" ${JEPA:+pipeline.model.jepa.checkpoint_path=$JEPA} ${VQVAE:+pipeline.model.vqvae.checkpoint_path=$VQVAE} #="jepa_train"
