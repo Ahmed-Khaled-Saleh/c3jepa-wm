@@ -90,8 +90,8 @@ class C3WMCommunication(CommunicationWrapper):
     """stable-marl's `CommunicationWrapper` with C3-WM's messages: each agent sends its view's VQ tokens and its pose
     (`tokens`), over a link built for each episode's layout (`link`), and keeps every other agent's latest message it
     received as the world model reads them (`models.jepa.latest_messages`): `msg_tokens` (A, 49), `msg_received` (A,),
-    `msg_age` (A,) and `msg_pose` (A, 3), the sender's pose relative to the receiver when it was sent (one row per
-    agent; the receiver's own row never received). Each round's transmissions are kept in `records` (gain, power,
+    `msg_age` (A,) and `msg_pose` (A, 3), the sender's pose when it sent it relative to the receiver's pose now (one
+    row per agent; the receiver's own row never received). Each round's transmissions are kept in `records` (gain, power,
     sent, arrived, wrong tokens) when the link reports them."""
 
     def __init__(
@@ -117,7 +117,7 @@ class C3WMCommunication(CommunicationWrapper):
     def _clear(self):
         A = self.num_agents
         self._memory = dict(tokens=np.zeros((A, A, MESSAGE_TOKENS), np.int64), received=np.zeros((A, A), bool),
-                            age=np.zeros((A, A), np.int64), pose=np.zeros((A, A, POSE), np.int64))
+                            age=np.zeros((A, A), np.int64), sender=np.zeros((A, A, POSE), np.int64))
 
     def _payload(self, env, agent, obs):
         return self._payloads.get(agent)
@@ -160,15 +160,16 @@ class C3WMCommunication(CommunicationWrapper):
             for j in arrived:
                 m = np.rint(obs[a]['messages'][j]).astype(np.int64)
                 mem['tokens'][a, j] = m[:MESSAGE_TOKENS]
-                mem['pose'][a, j] = _relative_pose(m[MESSAGE_TOKENS:MESSAGE_TOKENS + 2], m[-1],
-                                                   np.asarray(obs[a]['position']), int(obs[a]['direction']))
+                mem['sender'][a, j] = m[MESSAGE_TOKENS:MESSAGE_TOKENS + POSE]   # its pose when it sent: x, y, direction
                 mem['age'][a, j], mem['received'][a, j] = 0, True
         mem['received'] &= mem['age'] <= self.max_age
         mem['age'] = np.where(mem['received'], mem['age'], 0)
         out = dict(obs)
-        for a in range(A):
+        for a in range(A):                                          # each message placed from where the receiver is now
+            pose = _relative_pose(mem['sender'][a, :, :2], mem['sender'][a, :, 2], np.asarray(obs[a]['position']),
+                                  int(obs[a]['direction']))
             out[a] = {**obs[a], 'msg_tokens': mem['tokens'][a].copy(), 'msg_received': mem['received'][a].copy(),
-                      'msg_age': mem['age'][a].copy(), 'msg_pose': mem['pose'][a].copy()}
+                      'msg_age': mem['age'][a].copy(), 'msg_pose': pose.astype(np.int64)}
         return out
 
 def vq_tokens(vqvae, device="cpu") -> Callable:

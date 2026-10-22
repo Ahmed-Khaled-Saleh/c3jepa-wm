@@ -209,11 +209,12 @@ def erasure_rates(self: WMFinetuner, n: int):
 @patch
 def messages(self: WMFinetuner, batch, rate):
     """The predictor's messages for the history steps: each sent message arrives with probability 1 - `rate` (B,).
-    batch: msg_tokens (B, S, N, 49), msg_sent (B, S, N), msg_pose (B, S, N, 3) over the memory and the history"""
+    batch: msg_tokens (B, S, N, 49), msg_sent (B, S, N), msg_sender (B, S, N, 3), msg_receiver (B, S, 3) over the
+    memory and the history"""
     sent = batch["msg_sent"]
     received = sent & (torch.rand(sent.shape, device=sent.device) >= rate.view(-1, 1, 1))
-    return latest_messages(batch["msg_tokens"], received, batch["msg_pose"], steps=self.history_size,
-                           max_age=self.model.predictor.max_age)
+    return latest_messages(batch["msg_tokens"], received, batch["msg_sender"], batch["msg_receiver"],
+                           steps=self.history_size, max_age=self.model.predictor.max_age)
 
 # %% ../../nbs/05c_trainers.wm_tune.ipynb #1cb8f317
 @patch

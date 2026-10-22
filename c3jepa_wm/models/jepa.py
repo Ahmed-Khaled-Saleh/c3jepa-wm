@@ -34,12 +34,14 @@ def relative_pose(sender_pos, sender_dir, receiver_pos, receiver_dir):
     d = sender_pos - receiver_pos
     return torch.stack([(d * ahead).sum(-1), (d * right).sum(-1), (sender_dir - receiver_dir) % 4], -1)
 
-def latest_messages(tokens, received, pose, steps: int, max_age: int) -> dict:
+def latest_messages(tokens, received, sender, receiver, steps: int, max_age: int) -> dict:
     """The predictor's messages for the last `steps` of S steps: each sender's latest message received at most
-    `max_age` steps before (age 0: sent this step).
+    `max_age` steps before (age 0: sent this step), with the sender's pose when it sent it relative to the receiver's
+    pose at the step it is read (`relative_pose`).
     tokens:   (B, S, N, L) the messages sent at each step (L tokens each)
     received: (B, S, N)    which of them arrived
-    pose:     (B, S, N, 3) the sender's pose relative to the receiver when sent (`relative_pose`)
+    sender:   (B, S, N, 3) each sender's pose at each step: x, y (cells, y down), direction (`DIR_VECTORS`' index)
+    receiver: (B, S, 3)    the receiver's pose at each step
     returns:  tokens (B, steps, N, L), received (B, steps, N), age (B, steps, N), pose (B, steps, N, 3)"""
     B, S, N = received.shape
     t = torch.arange(S, device=received.device).view(1, S, 1).expand(B, S, N)
@@ -52,8 +54,9 @@ def latest_messages(tokens, received, pose, steps: int, max_age: int) -> dict:
         i = index.view(B, steps, N, *[1] * (x.dim() - 3)).expand(B, steps, N, *x.shape[3:])
         return torch.gather(x, 1, i)
 
-    return {"tokens": at_last(tokens), "received": ok, "age": torch.where(ok, age, torch.zeros_like(age)),
-            "pose": at_last(pose)}
+    sent_from, now = at_last(sender), receiver[:, -steps:, None]
+    pose = relative_pose(sent_from[..., :2], sent_from[..., 2], now[..., :2], now[..., 2])
+    return {"tokens": at_last(tokens), "received": ok, "age": torch.where(ok, age, torch.zeros_like(age)), "pose": pose}
 
 # %% ../../nbs/02c_models.jepa.ipynb #ed7dc7a2
 class SIGReg(torch.nn.Module):
@@ -386,6 +389,7 @@ class MLP(nn.Module):
 
 
 # %% ../../nbs/02c_models.jepa.ipynb #1dd4ae56
+import math
 class ARPredictor(nn.Module):
     def __init__(
         self,
@@ -403,7 +407,8 @@ class ARPredictor(nn.Module):
         msg_embedding_dim=256,   # VQ-VAE embedding_dim
         num_embeddings=256,      # VQ-VAE codebook size
         num_msg_tokens=49,       # tokens per message (the sender's 7 x 7 view)
-        max_offset=14,           # relative poses: up to this many cells ahead/behind and right/left (the grid's size - 1)
+        max_offset=14,           # relative poses: up to this many cells ahead/behind and right/left (the grid's size - 1);
+                                 # a token's cell can be its view's depth farther
         max_age=8,               # messages kept this many steps after they were sent
     ):
         super().__init__()
@@ -418,11 +423,16 @@ class ARPredictor(nn.Module):
             else nn.Identity()
         )
         self.msg_pos_spatial = nn.Parameter(torch.randn(1, num_msg_tokens, hidden_dim) * 0.02)
-        self.msg_ahead = nn.Embedding(2 * max_offset + 1, hidden_dim)   # the sender's relative pose and the age:
-        self.msg_right = nn.Embedding(2 * max_offset + 1, hidden_dim)   # added to all of a message's tokens
-        self.msg_heading = nn.Embedding(4, hidden_dim)
-        self.msg_age = nn.Embedding(max_age + 1, hidden_dim)
-        for e in (self.msg_ahead, self.msg_right, self.msg_heading, self.msg_age):
+        # each token's cell in the receiver's frame (`tile_positions`): cells ahead and to the right of the receiver
+        view = math.isqrt(num_msg_tokens)                           # the sender's square view, the sender at its bottom centre
+        self.reach = max_offset + view - 1
+        row, col = torch.arange(num_msg_tokens) // view, torch.arange(num_msg_tokens) % view
+        self.register_buffer("tile_cells", torch.stack([view - 1 - row, col - view // 2], -1), persistent=False)
+        self.tile_ahead = nn.Embedding(2 * self.reach + 1, hidden_dim)
+        self.tile_right = nn.Embedding(2 * self.reach + 1, hidden_dim)
+        self.msg_heading = nn.Embedding(4, hidden_dim)               # the sender's heading and the age: added to all
+        self.msg_age = nn.Embedding(max_age + 1, hidden_dim)         # of a message's tokens
+        for e in (self.tile_ahead, self.tile_right, self.msg_heading, self.msg_age):
             nn.init.normal_(e.weight, std=0.02)
         self.no_msg = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)  # 'nothing received': always attendable
 
@@ -438,16 +448,27 @@ class ARPredictor(nn.Module):
             block_class=MessageConditionedBlock,
         )
 
+    def tile_positions(self, pose):
+        """Each token's cell relative to the receiver: (cells ahead, cells to the right) `(..., L, 2)`, from the sender's
+        pose relative to the receiver `(..., 3)` (`relative_pose`): its cell in the sender's view, turned by the sender's
+        heading, from the sender's cell."""
+        a, r = self.tile_cells[:, 0], self.tile_cells[:, 1]          # in the sender's frame
+        turn = (pose[..., 2] % 4).unsqueeze(-1)                       # clockwise quarter turns
+        ahead = torch.stack([a, -r, -a, r])[turn.squeeze(-1)]        # (..., L)
+        right = torch.stack([r, a, -r, -a])[turn.squeeze(-1)]
+        return torch.stack([pose[..., 0:1] + ahead, pose[..., 1:2] + right], -1)
+
     def message_keys(self, messages):
         """Each step's message tokens and mask, as the blocks read them.
         messages: tokens (B, T, N, L), received (B, T, N), age (B, T, N), pose (B, T, N, 3) — `latest_messages`'
         returns: keys (B*T, N*L + 1, D) and mask (B*T, N*L + 1), True where nothing was received"""
         tokens, received = messages["tokens"], messages["received"]
         B, T, N, L = tokens.shape
-        pose, age, m = messages["pose"], messages["age"], self.max_offset
-        about = (self.msg_ahead(pose[..., 0].clamp(-m, m) + m) + self.msg_right(pose[..., 1].clamp(-m, m) + m)
-                 + self.msg_heading(pose[..., 2] % 4) + self.msg_age(age.clamp(0, self.max_age)))   # (B, T, N, D)
-        keys = self.msg_proj(self.msg_token_embedding(tokens)) + self.msg_pos_spatial + about.unsqueeze(-2)
+        pose, age, m = messages["pose"], messages["age"], self.reach
+        cells = self.tile_positions(pose).clamp(-m, m) + m           # (B, T, N, L, 2)
+        about = self.msg_heading(pose[..., 2] % 4) + self.msg_age(age.clamp(0, self.max_age))   # (B, T, N, D)
+        keys = (self.msg_proj(self.msg_token_embedding(tokens)) + self.msg_pos_spatial
+                + self.tile_ahead(cells[..., 0]) + self.tile_right(cells[..., 1]) + about.unsqueeze(-2))
         keys = rearrange(keys, "b t n l d -> (b t) (n l) d")
         keys = torch.cat([keys, self.no_msg.expand(B * T, 1, -1)], dim=1)
         mask = rearrange(~received, "b t n -> (b t) n").repeat_interleave(L, dim=1)
@@ -540,7 +561,8 @@ class JEPA(nn.Module):
         action_sequence: (B, S, T) the actions, the observed steps' first
         messages: dict, optional — the observed steps' received messages (`latest_messages`), each (B, S, H, ...).
             The imagined steps keep the last observed step's messages, older by a step each (none arrive in them;
-            a message older than the predictor's max_age is dropped)
+            a message older than the predictor's max_age is dropped), placed from the last observed pose (the
+            imagined poses are unknown)
         - S is the number of action plan samples
         - T is the time horizon
         """

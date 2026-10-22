@@ -333,10 +333,11 @@ class FindGoalWorldModelDataset(Dataset):
         inside = rows >= self.episode_start[r]
         rows = np.maximum(rows, self.episode_start[r])
         sent = inside[:, None] & ~self.done[rows][:, senders]             # a sender at the goal sends no more
-        pose = _relative_pose(self.position[rows][:, senders], self.direction[rows][:, senders],
-                              self.position[rows, i][:, None], self.direction[rows, i][:, None])
+        sender = np.concatenate([self.position[rows][:, senders], self.direction[rows][:, senders, None]], -1)
+        receiver = np.concatenate([self.position[rows, i], self.direction[rows, i][:, None]], -1)
         out.update(msg_tokens=torch.as_tensor(np.asarray(self.tokens[rows][:, senders]), dtype=torch.long),
-                   msg_sent=torch.as_tensor(sent), msg_pose=torch.as_tensor(pose, dtype=torch.long))
+                   msg_sent=torch.as_tensor(sent), msg_sender=torch.as_tensor(sender, dtype=torch.long),
+                   msg_receiver=torch.as_tensor(receiver, dtype=torch.long))
         return out
 
     def close(self):
