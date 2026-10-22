@@ -1,15 +1,19 @@
 #!/bin/bash
 #SBATCH --account=project_2009050
 #SBATCH --job-name=collect_world
-#SBATCH --partition=medium
+#SBATCH --partition=gpumedium
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=128
+#SBATCH --cpus-per-task=72
+#SBATCH --mem=128G
 #SBATCH --time=4:00:00
+#SBATCH --gres=gpu:gh200:1
 #SBATCH --output=./logs/out_%j_%x_%N.log  # includes job ID (j), job name (x) and node name (N)
 #SBATCH --error=./logs/err_%j_%x_%N.err
 
-# The FindGoal dataset on the cluster (mains/collect_world.py, configs/collect/config.yaml), every stage in one job:
+# The FindGoal dataset (mains/collect_world.py, configs/collect/config.yaml), every stage in one job, on a GH200 node:
+# the venv and the pytorch module are built for its arm64 (Roihu's CPU nodes are amd64); the GPU is unused, the
+# node's 72 Grace cores collect.
 #   collect (one part per `chunk` episodes, `workers` = the job's CPUs at once)  ->  merge (dataset.h5)  ->  trajectories
 # The config's 260 layouts x 40 episodes, with stable-marl's MixedPolicy; the POV images draw the other agent
 # (stable-marl 5a62dd0). Parts already written are skipped, so the same job can be submitted again if it runs out
