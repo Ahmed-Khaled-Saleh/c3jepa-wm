@@ -147,12 +147,12 @@ def _history_data(cfg) -> int:
     return built
 
 
-def _per_layout(cfg, data, layouts, seed) -> dict:
+def _per_layout(cfg, data, layouts, seed, trajectories: str = 'trajectories') -> dict:
     """Each layout's samples (`build_dataset` one layout at a time: the same as all at once, with the fading seeded per
     layout), built with `_history_data` past gains and kept to the `link.history` most recent; with the past steps if
-    a predictor reads them."""
+    a predictor reads them; from the trajectories in `data / trajectories`."""
     link = cfg.link
-    return {k: with_history(build_dataset(data / 'layouts', data / 'trajectories', [k], history=_history_data(cfg),
+    return {k: with_history(build_dataset(data / 'layouts', data / trajectories, [k], history=_history_data(cfg),
                                           fading=link.fading, fading_correlation=_rho(cfg), symmetric=link.symmetric,
                                           seed=seed, steps=_needs_steps(cfg), channel=link.channel), link.history)
             for k in layouts}
@@ -190,6 +190,14 @@ def _deployment(cfg, data: Path, train) -> dict | None:
     deployment = deployment_layouts(cfg.env, train, range(*d.pool), groups, tuple(d.edited), d.per_group, d.seed, d.first_id)
     save_deployment(path, deployment)
     return load_deployment(path)
+
+
+def _shifts(cfg) -> dict:
+    "`deployment.shifts`: name -> (the behaviour policy's weights, its ε), each collected into `trajectories_<name>/`."
+    d = cfg.deployment
+    if not d.enabled or not d.get('shifts'):
+        return {}
+    return {name: (OmegaConf.to_container(s.policy), float(s.get('epsilon', cfg.rollouts.epsilon))) for name, s in d.shifts.items()}
 
 
 def _taus(cfg) -> list:
@@ -476,6 +484,11 @@ def main(cfg: DictConfig):
                                  max_steps=r.max_steps, policy=OmegaConf.to_container(r.policy), epsilon=r.epsilon,
                                  seed=r.seed, overwrite=r.overwrite, edits=edits)
             logger.info(f"{len(mine_deployed)} deployment layouts' trajectories ({cfg.deployment.episodes} episodes each)")
+            for name, (policy, epsilon) in _shifts(cfg).items():
+                collect_trajectories(cfg.env, mine_deployed, data / f'trajectories_{name}', episodes=cfg.deployment.shift_episodes,
+                                     max_steps=r.max_steps, policy=policy, epsilon=epsilon, seed=r.seed, overwrite=r.overwrite,
+                                     edits=edits)
+                logger.info(f"{len(mine_deployed)} deployment layouts' trajectories with the {name} behaviour {policy}, ε = {epsilon}")
             log.table('deploy/layouts', ['layout', 'group', 'base', 'distance', 'edits', 'walls', 'nearest'],
                       [[k, v['group'], v['base'], v['distance'], v['edits'], v['walls'], v['nearest']]
                        for k, v in deployment['layouts'].items()])
@@ -490,6 +503,8 @@ def main(cfg: DictConfig):
         mine = mine + mine_deployed
         if t.mode == 'pairs':
             trace_visited_pairs(cfg.env, data / 'trajectories', mine, data / 'layouts', edits=edits, **options)
+            for name in _shifts(cfg):                                 # the deployment layouts' pairs the other behaviours visit
+                trace_visited_pairs(cfg.env, data / f'trajectories_{name}', mine_deployed, data / 'layouts', edits=edits, **options)
         elif t.mode == 'full':
             trace_layouts(cfg.env, mine, data / 'layouts', overwrite=t.overwrite, edits=edits, **options)
         else:
@@ -500,16 +515,18 @@ def main(cfg: DictConfig):
         log.summary({'trace/variant': variant, 'trace/layouts': len(mine), 'trace/traced': pairs,
                      'trace/seconds': time.time() - start})
 
-    cache = {}                                                       # the samples per layout, per fading seed
-    def sets_of(split: dict, seed: int) -> dict:
+    cache = {}                                                       # the samples per layout, per fading seed and trajectories
+    def sets_of(split: dict, seed: int, trajectories: str = 'trajectories') -> dict:
         if cfg.link.fading is None:
             seed = cfg.link.seed                                     # no fading: the samples don't depend on the seed
-        if seed not in cache:
-            cache.clear()
-            cache[seed] = {}
-        need = [k for v in split.values() for k in v if k not in cache[seed]]
-        cache[seed].update(_per_layout(cfg, data, need, seed))
-        out = {k: _join(cache[seed], v) for k, v in split.items()}
+        key = (seed, trajectories)
+        if key not in cache:
+            for k in [k for k in cache if k[0] != seed]:
+                del cache[k]
+            cache[key] = {}
+        need = [k for v in split.values() for k in v if k not in cache[key]]
+        cache[key].update(_per_layout(cfg, data, need, seed, trajectories))
+        out = {k: _join(cache[key], v) for k, v in split.items()}
         if 'train' in out:                                           # training: each layout's first rollouts.episodes
             keep = out['train']['episode'] < cfg.rollouts.episodes
             out['train'] = {k: v[keep] for k, v in out['train'].items()}
@@ -637,6 +654,23 @@ def main(cfg: DictConfig):
                        for n, r in out['deployment']['methods'].items() for g, p in r['prediction'].items()])
             log.images({k: v for k, v in images.items() if k.startswith('deploy/')})
             log.summary({'deploy/seconds': time.time() - start, 'deploy/transmissions': out['deployment']['transmissions']})
+            shift_rows = []                                          # the same calibration, the agents moving differently
+            for name, (policy, epsilon) in _shifts(cfg).items():
+                s_sets = dict(d_sets, deployment=sets_of({'deployment': deployed}, cfg.link.seed, f'trajectories_{name}')['deployment'])
+                r = deploy(cfg, saved, s_sets, deployment, fitted)
+                out.setdefault('deployment_shift', {})[name] = r
+                moving = float(s_sets['deployment']['fresh'].mean()) if 'fresh' in s_sets['deployment'] else math.nan
+                for t in e.targets:
+                    logger.info(f"deployment with the {name} behaviour ({100 * moving:.0f}% of transmissions after a move):\n"
+                                + deployment_table(r, float(t)))
+                shift_rows += [[name, moving, n, t, g, *(o['groups'][g].get(k) for k in DEPLOY_METRICS)]
+                               for n, m in r['methods'].items() for t, o in m['targets'].items() for g in o['groups']]
+            if shift_rows:
+                moving = float(d_sets['deployment']['fresh'].mean()) if 'fresh' in d_sets['deployment'] else math.nan
+                shift_rows += [['training mix', moving, n, t, g, *(o['groups'][g].get(k) for k in DEPLOY_METRICS)]
+                               for n, m in out['deployment']['methods'].items() for t, o in m['targets'].items() for g in o['groups']]
+                log.table('deploy_shift/methods', ['behaviour', 'after_a_move', 'method', 'target', 'group', *DEPLOY_METRICS],
+                          shift_rows)
 
         # runs 1..: fitted, calibrated and judged again on new splits of the same layouts (nothing traced again)
         runs, per_run = [metrics(comparison)], [dict(run=0, layouts=seeds, calibration=c)]

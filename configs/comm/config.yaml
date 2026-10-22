@@ -135,6 +135,12 @@ deployment:                    # layouts grouped by their distance to the traini
   first_id: 1000000            # the edited layouts' ids
   episodes: 40                 # per deployment layout: the first `pilot` for the per-layout calibration, the rest judged
   pilot: 2
+  shifts:                      # the deployment layouts also with other behaviour policies (each collected into trajectories_<name>/,
+                               # traced, and judged with the same predictors and calibration): does the reliability hold when the
+                               # agents move differently than in the data? ({}: off)
+    expert: {policy: {epsilon_expert: 1.0}, epsilon: 0.0}   # straight to the goal, then still
+    random: {policy: {random: 1.0}}                          # uniform actions: turning in place as often as moving
+  shift_episodes: 20           # per deployment layout and behaviour
   seed: 0                      # of the edits
   overwrite: false             # choose the layouts again (then collect and trace them again: rollouts.overwrite, a new data_dir)
 
