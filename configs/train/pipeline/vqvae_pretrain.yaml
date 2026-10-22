@@ -16,6 +16,7 @@ model:
   beta: 0.25                     # the commitment loss's weight
   pre_quant_activation: false    # the encoder's output quantized as it is
   dead_threshold: 0.03           # a code picked fewer times per batch (an EMA) restarts on an encoder output
+  recon_loss: mse                # squared error: L1 drew no agent (each pixel to its median: an agent coded as floor is never drawn)
 
 datamodule:
   data_dir: /scratch/project_2009050/datasets/findgoal_layouts   # collect_world.py's dataset (the partner drawn in the POV)
@@ -34,3 +35,4 @@ trainer:
   rarity_power: 0.5              # a tile weighs its kind's share ** -0.5 (goal and partner tiles ~10x a wall's)
   tile_tolerance: 64             # a tile is reconstructed when no pixel is off by more than 64 / 255
   select: tiles                  # checkpoints and early stopping on the mean tile accuracy over the kinds of tiles
+  ignore: [ego]                  # the own agent: always the same tile and pose, its colour only says who sent (logged, not trained or scored)

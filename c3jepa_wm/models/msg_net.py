@@ -160,6 +160,7 @@ class VQVAE(BaseVAE):
                  num_residual_layers: int = 3,
                  pre_quant_activation: bool = True, # A LeakyReLU on the encoder's output (the checkpoints before Oct 2026 have it)
                  dead_threshold: float | None = None, # `VectorQuantizer`'s: restart the codes used less (None: never)
+                 recon_loss: str = "l1", # The reconstruction loss per pixel: 'l1', 'mse' or 'l1+mse'
                  **kwargs) -> None:
         super(VQVAE, self).__init__()
 
@@ -168,6 +169,8 @@ class VQVAE(BaseVAE):
         self.img_size = img_size
         self.beta = beta
         self.num_residual_layers = num_residual_layers
+        assert recon_loss in ("l1", "mse", "l1+mse"), recon_loss
+        self.recon_loss = recon_loss
 
         # =====================================================================
         # BUILD ENCODER
@@ -297,7 +300,11 @@ class VQVAE(BaseVAE):
         else:
             # Weight non-black pixels more heavily
             pixel_weights = (input > -0.9).float() * 9.0 + 1.0  # 10x weight on non-black
-        recons_loss = (F.l1_loss(recons, input, reduction='none') * pixel_weights).mean()
+        # L1 pulls each pixel to its median: a detail drawn in fewer than half the frames sharing a code (an agent's tile
+        # coded as floor) comes out as background; the squared error draws the mean, and its miss pushes such codes apart
+        err = (recons - input).abs()
+        per_pixel = {"l1": err, "mse": err ** 2, "l1+mse": err + err ** 2}[self.recon_loss]
+        recons_loss = (per_pixel * pixel_weights).mean()
         
 
         loss = recons_loss + vq_loss

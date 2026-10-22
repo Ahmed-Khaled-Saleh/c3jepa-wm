@@ -65,6 +65,7 @@ class VQVAETrainer(BaseTrainer):
                  rarity_power: float = 0.0, # Tiles weighted by their kind's share ** -rarity_power (0: the old pixel weights)
                  tile_tolerance: float = 64, # A tile is reconstructed when no pixel is off by more (0-255)
                  select: str = "tiles", # The checkpoints' and early stopping's score: 'tiles' (the kinds' mean tile accuracy) or 'loss'
+                 ignore=(), # Kinds of tiles (`TILE_NAMES`) left out of the loss and the score, still logged (e.g. 'ego')
                  **kwargs):
         super().__init__(
             data_module= data_module,
@@ -77,10 +78,12 @@ class VQVAETrainer(BaseTrainer):
             self.optimizer, mode='min', factor=0.5, patience=5
         )
         self.tile_tolerance, self.select = tile_tolerance, select
+        self.ignored = [TILE_NAMES.index(k) for k in ignore]
         self.tile_weights = None                                    # per kind of tile (TILE_NAMES), when the data has them
-        if rarity_power and hasattr(self.data_module.train_dataset, "tile_frequencies"):
+        if (rarity_power or ignore) and hasattr(self.data_module.train_dataset, "tile_frequencies"):
             share = self.data_module.train_dataset.tile_frequencies()
             w = np.where(share > 0, np.maximum(share, 1e-12) ** -rarity_power, 0.0)
+            w[self.ignored] = 0.0
             w /= (share * w).sum()                                  # a tile weighs 1 on average
             self.tile_weights = torch.tensor(w, dtype=torch.float32, device=device)
             logger.info("Tile weights: " + ", ".join(f"{n} {v:.2f}" for n, s, v in zip(TILE_NAMES, share, w) if s > 0))
@@ -244,11 +247,13 @@ def validate_epoch(self: VQVAETrainer, epoch: int):
     score = -avg_loss
     if counts.sum() > 0:
         seen = counts > 0
-        accuracy = hits[seen] / counts[seen]
-        logs.update({f"val_tiles/{TILE_NAMES[k]}": a.item() for k, a in zip(seen.nonzero().flatten().tolist(), accuracy)})
-        logs.update({"val_tiles/mean": accuracy.mean().item(), "val_goal_lost": goal_lost / max(goal_frames, 1)})
+        accuracy = hits / counts.clamp(min=1)
+        logs.update({f"val_tiles/{TILE_NAMES[k]}": accuracy[k].item() for k in seen.nonzero().flatten().tolist()})
+        scored = seen.clone()
+        scored[self.ignored] = False                                # the ignored kinds logged, not scored
+        logs.update({"val_tiles/mean": accuracy[scored].mean().item(), "val_goal_lost": goal_lost / max(goal_frames, 1)})
         if self.select == "tiles":
-            score = accuracy.mean().item()
+            score = accuracy[scored].mean().item()
     logger.info(f"Epoch {epoch:02d} | " + ", ".join(f"{k}: {v:.4f}" for k, v in logs.items() if k != "epoch"))
 
     # Log epoch-level validation metrics
