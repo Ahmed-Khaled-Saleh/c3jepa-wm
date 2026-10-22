@@ -29,57 +29,7 @@ from hydra.utils import to_absolute_path
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
 
-BEHAVIOURS = ('random', 'epsilon_expert', 'waypoint')        # stable-marl's MixedPolicy.BEHAVIOURS: the `behaviour` column
-
-
-class LayoutWrapper(gym.Wrapper):
-    """Episode seed `s` plays in the layout of reset seed `layouts[s % len(layouts)]`, from a goal and starts drawn
-    with `s`: agents on distinct free cells, at least the env's `min_goal_spawn_distance` from the goal, random headings.
-    Every agent's info holds the layout's seed (`layout`) and the episode's behaviour under `policy` (`behaviour`, the
-    index in `BEHAVIOURS`; -1 before the first action). `variations`: factors of variation every reset draws from the
-    layout's seed (the env config's, e.g. obstacles.number and clutter.number), as `channel_data.make_env` sets them."""
-
-    def __init__(self, env, layouts, policy=None, variations=()):
-        super().__init__(env)
-        self.layouts, self.policy, self.layout = list(layouts), policy, None
-        if variations:
-            env.unwrapped.DEFAULT_VARIATIONS = tuple(variations)
-
-    def reset(self, *, seed=None, options=None):
-        rng = np.random.default_rng(None if seed is None else [int(seed), 7])
-        self.layout = int(self.layouts[int(seed) % len(self.layouts)] if seed is not None else rng.choice(self.layouts))
-        self.env.reset(seed=self.layout, options=options)
-        u = self.env.unwrapped
-        self._place(u, rng)
-        u._goal_infos = u.goal_infos()                              # the goal image and cell, from the new goal
-        return u.gen_obs(), self._tag(u._infos())
-
-    def step(self, actions):
-        obs, rewards, terminations, truncations, infos = self.env.step(actions)
-        return obs, rewards, terminations, truncations, self._tag(infos)
-
-    def _tag(self, infos):
-        u = self.env.unwrapped
-        name = self.policy.behaviour(u) if self.policy is not None else None
-        tags = {'layout': np.int64(self.layout), 'behaviour': np.int64(BEHAVIOURS.index(name) if name else -1)}
-        return {a: {**infos.get(a, {}), **tags} for a in range(u.num_agents)}
-
-    @staticmethod
-    def _place(u, rng):
-        from stable_marl.envs.multigrid.core.world_object import Goal
-        u.grid.set(*(int(v) for v in u.goal_pos), None)
-        free = [(x, y) for x in range(u.grid.width) for y in range(u.grid.height)
-                if (o := u.grid.get(x, y)) is None or o.can_overlap()]
-        goal = free[rng.integers(len(free))]
-        u.grid.set(*goal, Goal())
-        u.goal_pos = np.asarray(goal)
-        far = lambda c: abs(c[0] - goal[0]) + abs(c[1] - goal[1])
-        cells = [c for c in free if c != goal]
-        reach = min(int(u._variation('goal.min_spawn_distance')), max(far(c) for c in cells))
-        starts = [c for c in cells if far(c) >= reach]               # as FindGoal's own spawn rule
-        for agent, k in zip(u.agents, rng.choice(len(starts), len(u.agents), replace=False)):
-            agent.state.pos = starts[k]
-            agent.state.dir = int(rng.integers(4))
+from c3jepa_wm.utils.env_utils import BEHAVIOURS, LayoutWrapper   # the episodes' layouts, goals and starts
 
 
 def _env_kwargs(cfg) -> dict:

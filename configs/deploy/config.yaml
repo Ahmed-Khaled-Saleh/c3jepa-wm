@@ -1,0 +1,71 @@
+# @package _global_
+# configs/deploy/config.yaml: the agents plan with the world model while their messages go through the channel
+# (mains/deploy.py, c3jepa_wm.evaluators.deploy): stable-marl's World on the test layouts, CommunicationWrapper with
+# comm-core's link (the layouts' ray-traced channel, Rician fading, C3-WM's power control, uncoded BPSK, a CRC).
+#   python deploy.py                                             # every method, the test layouts
+#   python deploy.py methods=[learned] episodes=60 planner.num_samples=256
+defaults:
+  - /comm/env@env: findgoal      # the env of configs/comm (the layouts traced there)
+  - /train/model@jepa: control_jepa
+  - /train/model@vqvae: vqvae
+  - _self_
+
+data_dir: /scratch/project_2009050/datasets/findgoal/comm_power_1m   # comm_power's: layouts/ (the traced pairs), runs/
+out_dir: ${data_dir}/runs/deploy  # results.json
+env_id: MultiGrid-FindGoal-15x15-v0
+layouts: [230, 260]              # the test layouts (configs/comm's split: train 0-200, calibration 200-230, test 230-260)
+episodes: 60                     # per method, the same ones for each (seed + k: layout 230 + (seed + k) % 30, its goal and starts)
+seed: 0
+num_envs: 4                      # episodes played at once
+max_steps: 150                   # an episode's budget (the env's)
+device: cuda
+
+methods: ['no communication', 'perfect channel', 'perfect CSI', 'learned']
+                                 # no communication: nothing arrives (the model's 'nothing received'); perfect channel: everything
+                                 # arrives; perfect CSI / learned: the link with that power control (learned: power_control's κ, τ)
+
+checkpoints:
+  jepa: ???                      # the fine-tuned world model (wm_finetune: wm_model_state_dict)
+  vqvae: ???                     # the VQ-VAE its tokens came from (model_state_dict)
+  power_control: ???             # comm_power's power_control.pkl (load_power_control): the run whose predictor, κ and τ to use
+
+link:                            # as configs/comm's
+  crc: true                      # a message with a wrong bit is dropped (an erasure, as in the world model's training)
+  rician: true                   # Rician fading on the large-scale channel (link.fading: rician)
+  step_seconds: 1.0
+  doppler_hz: 0.1
+  fading_correlation: null       # null: J₀(2π doppler_hz step_seconds)
+
+tracing:                         # configs/comm's: the layouts' caches are opened with these (a pair not traced yet is traced, on the GPU)
+  frequency: 2.4e9
+  max_depth: 16
+  scene:
+    cell_size: 1.0
+    thickness: {inner_wall: 0.1, outer_wall: 0.15}
+  solver: {}
+
+actions: 3                       # the agents act with turn left, turn right, forward (FindGoal's fourth, pickup, does nothing)
+
+planner:                         # stable-marl's WorldModelPolicy, one cost per agent (per_agent)
+  solver: stable_marl            # stable_marl: its CategoricalCEMSolver; c3jepa: planners.mpc's DiscreteCEMSolver (the same CEM)
+  horizon: 10                    # planning steps
+  receding_horizon: 1            # replan at every step (each new frame and message used at once)
+  num_samples: 128               # candidate plans per agent (c3jepa's pop_size)
+  n_steps: 5                     # CEM iterations (c3jepa's opt_steps)
+  topk: 16
+
+pipeline:                        # what the model configs interpolate (configs/train/pipeline/wm_finetune.yaml's)
+  history_size: 3
+  embed_dim: 192
+  img_size: 224
+  msg_embedding_dim: 256
+  num_embeddings: 256
+
+vqvae:
+  pre_quant_activation: false    # the VQ-VAE trained with pipeline/vqvae_pretrain.yaml (true: the checkpoints before Oct 2026)
+
+wandb:
+  enabled: true
+  project: c3jepa-deploy
+  mode: online
+  name: null
