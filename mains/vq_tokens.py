@@ -4,6 +4,9 @@ On frames of the validation layouts, the token the encoder gives each tile next 
 `image` column: its kind, and the partner by colour and by its arrow as drawn, i.e. its direction relative to the
 viewer's), and:
   kinds     each code's share of each kind of tile, the codes' purity and how much of the kind they tell
+  context   per label of the partner, goal and ego: its tiles reconstructed in their frames, and drawn by their code
+            alone (put into other frames): a label reconstructed only with its neighbours' help scores low alone, as
+            when the partner's colour is read off the ego's (two agents) and would be lost with more agents
   agents    for the partner (colour x direction), the goal and the ego: the codes that carry them
   gallery   per kind, its most used codes, each with tiles it was given (a tile of context around them)
   codes     what each code draws on its own (the decoder on a 7x7 grid of that code)
@@ -25,15 +28,15 @@ from omegaconf import DictConfig, OmegaConf
 
 TILE = 32                                                    # pixels per tile: 7 x 7 tiles of 224 x 224 frames
 DIRECTIONS = ('up', 'right', 'down', 'left')                 # the partner's arrow as drawn: (its direction - the viewer's) mod 4
-COLOURS = ('red', 'green', 'blue')
-GALLERY_KINDS = ('empty', 'wall', 'goal', 'partner', 'ego')       # the kinds whose tiles the galleries keep, per code                           # an agent's colour: its pixels' strongest channel
+COLOURS = ('red', 'blue', 'green', 'purple', 'yellow', 'grey')  # stable-marl's Color, in its order (agents cycle through it)
+GALLERY_KINDS = ('empty', 'wall', 'goal', 'partner', 'ego')  # the kinds whose tiles the galleries keep, per code
 KIND_COLOURS = {'unseen': '#ffffff', 'empty': '#222222', 'wall': '#9a9a9a', 'floor': '#6b4f2a', 'door': '#c9a227',
                 'key': '#e6c200', 'ball': '#1f77b4', 'box': '#8c564b', 'goal': '#2ca02c', 'lava': '#ff7f0e',
                 'partner': '#9467bd', 'ego': '#d62728'}
 
 
 def label_name(value: int, kinds) -> str:
-    "A tile's label (`fine` in tokens.npz: kind * 100 + 10 * colour + direction) as text."
+    "A tile's label (`fine` in tokens.npz: kind * 100 + 10 * colour (`COLOURS`) + direction) as text."
     kind, rest = divmod(int(value), 100)
     name = kinds[kind]
     if name in ('partner', 'ego'):
@@ -53,6 +56,9 @@ def frames_dataset(ds, picks):
     "The dataset's frames `picks`: (position, frame, kinds of tiles, labels), the labels as `label_name` reads them."
     import torch
     from c3jepa_wm.data.datasets import TILE_NAMES
+    from stable_marl.envs.multigrid.core.constants import COLORS, Color
+    assert tuple(c.name for c in Color)[:len(COLOURS)] == COLOURS, "stable-marl's colours changed: update COLOURS"
+    palette = np.array([COLORS[Color[n]] for n in COLOURS], int)
     partner, ego = TILE_NAMES.index('partner'), TILE_NAMES.index('ego')
 
     class Frames(torch.utils.data.Dataset):
@@ -68,8 +74,9 @@ def frames_dataset(ds, picks):
             fine = k * 100
             for r, c in zip(*np.nonzero((k == partner) | (k == ego))):
                 tile = raw[r * TILE:(r + 1) * TILE, c * TILE:(c + 1) * TILE].reshape(-1, 3).astype(int)
-                lit = tile[tile.sum(1) > 60]
-                colour = int(lit.mean(0).argmax()) if len(lit) else 0
+                lit = tile[tile.sum(1) > 60]                          # the arrow: its most common pixel, the agent's colour
+                values, n_px = np.unique(lit, axis=0, return_counts=True) if len(lit) else (palette[:1], [1])
+                colour = int(((palette - values[np.argmax(n_px)]) ** 2).sum(1).argmin())
                 direction = (int(image[c, r, 2]) - own) % 4 if k[r, c] == partner else 0   # image is (x, y)
                 fine[r, c] += 10 * colour + direction
             return j, frame, kinds, torch.from_numpy(fine.astype(np.int16))
@@ -119,6 +126,7 @@ def compute(cfg, out: Path) -> None:
     gallery_from = np.full((K, len(GALLERY_KINDS), G, 3), -1, np.int64)               # was given, in context; (frame, row, col)
     filled = np.zeros((K, len(GALLERY_KINDS)), int)
     errors = []                                                              # per frame, its tiles' largest pixel error
+    drawing = {}
     with torch.no_grad():
         for j, x, k, f in loader:
             x = x.to(device)
@@ -129,6 +137,10 @@ def compute(cfg, out: Path) -> None:
             t, j = t.cpu().numpy(), j.numpy()
             tokens[j], kinds[j], fine[j] = t, k.numpy(), f.numpy()
             images = to_uint8(x)
+            for v in np.unique(fine[j]):                         # each label's drawing: its first tile (all are alike)
+                if int(v) not in drawing:
+                    b, rr, cc = np.argwhere(fine[j] == v)[0]
+                    drawing[int(v)] = images[b, rr * TILE:(rr + 1) * TILE, cc * TILE:(cc + 1) * TILE]
             kb = k.numpy()
             for b in range(len(t)):                                  # at most one tile per code and kind from a frame
                 taken = set()
@@ -174,6 +186,23 @@ def compute(cfg, out: Path) -> None:
             grids[:, r, c] = torch.as_tensor(swap_codes, device=device)
             swaps[e] = to_uint8(decode(grids))
 
+        # code alone: each code a partner, goal or ego label is given, at `swap_cell` of every example frame, decoded,
+        # against the label's drawing (as the tile accuracy: no pixel off by more than 64)
+        pairs = [(int(k), j) for j, v in enumerate(fine_values) if v // 100 in (partner, goal, TILE_NAMES.index('ego'))
+                 for k in np.nonzero(counts_fine[:, j])[0]]
+        pair_drawn = np.zeros((len(pairs), len(examples)), bool)
+        for e in range(len(examples)):
+            for start in range(0, len(pairs), 64):                   # in chunks: an untrained model has thousands of pairs
+                part = pairs[start:start + 64]
+                grids = example_tokens[e].repeat(len(part), 1, 1)
+                grids[:, r, c] = torch.as_tensor([k for k, _ in part], device=device)
+                tiles = to_uint8(decode(grids))[:, r * TILE:(r + 1) * TILE, c * TILE:(c + 1) * TILE].astype(int)
+                truth = np.stack([drawing[fine_values[j]] for _, j in part]).astype(int)
+                pair_drawn[start:start + len(part), e] = np.abs(tiles - truth).max(axis=(1, 2, 3)) <= 64
+        pair_code = np.array([k for k, _ in pairs], int)
+        pair_label = np.array([j for _, j in pairs], int)
+        drawings = np.stack([drawing[v] for v in fine_values])
+
         book = codebook.cpu().numpy()
         centred = book - book.mean(0)
         _, sv, vt = np.linalg.svd(centred, full_matrices=False)
@@ -183,10 +212,11 @@ def compute(cfg, out: Path) -> None:
                         counts_kind=counts_kind, counts_fine=counts_fine, gallery=gallery, gallery_from=gallery_from,
                         gallery_filled=filled, single=single, examples=examples, example_frames=example_frames,
                         example_recon=example_recon, swap_codes=swap_codes, swaps=swaps, codebook=book, pca=pca,
+                        drawings=drawings, pair_code=pair_code, pair_label=pair_label, pair_drawn=pair_drawn,
                         pca_variance=(sv[:2] ** 2) / (sv ** 2).sum())
     summary = dict(kinds=list(TILE_NAMES), kind_values=kind_values, fine_values=fine_values,
                    fine_names=[label_name(v, TILE_NAMES) for v in fine_values], swap_cell=list(cfg.swap_cell),
-                   gallery_kinds=list(GALLERY_KINDS),
+                   gallery_kinds=list(GALLERY_KINDS), colours=list(COLOURS), agents=int(ds.index[:, 1].max()) + 1,
                    checkpoint=str(cfg.checkpoint), data_dir=str(cfg.data_dir), val_layouts=list(cfg.val_layouts),
                    frames=int(N), codes=int(K))
     (out / 'summary.json').write_text(json.dumps(summary, indent=1))
@@ -229,6 +259,26 @@ def metrics(r, s) -> dict:
                 if n.startswith(('partner', 'ego'))})
     ok = r['tile_errors'].astype(np.float32) <= 64
     out.update({f'reconstructed/{n}': float(ok[r['kinds'] == v].mean()) for v, n in zip(s['kind_values'], kind_names)})
+    for label, (n, here, alone) in (context_rates(r, s) if 'pair_drawn' in r else {}).items():
+        out.update({f'reconstructed/{label}': here, f'alone/{label}': alone})
+    return out
+
+
+def context_rates(r, s) -> dict:
+    """Per label of the partner, goal and ego, and per such kind (all its labels): its tiles, the share reconstructed
+    in their frames, and the share whose code alone draws it (the code's rate over the example frames, by tiles)."""
+    ok = r['tile_errors'].astype(np.float32) <= 64
+    cf, out = r['counts_fine'], {}
+    groups = {}
+    for j in sorted(set(r['pair_label'].tolist())):
+        on = r['pair_label'] == j
+        tiles = cf[r['pair_code'][on], j]
+        alone = float((tiles * r['pair_drawn'][on].mean(1)).sum())
+        mask = r['fine'] == s['fine_values'][j]
+        out[s['fine_names'][j]] = (int(tiles.sum()), float(ok[mask].mean()), alone / tiles.sum())
+        g = groups.setdefault(s['fine_names'][j].split()[0], [0, 0.0, 0.0])
+        g[0] += int(tiles.sum()); g[1] += float(ok[mask].sum()); g[2] += alone
+    out.update({k: (n, here / n, alone / n) for k, (n, here, alone) in groups.items() if k not in out})
     return out
 
 
@@ -402,6 +452,25 @@ def plot_maps(r, s, path):
     fig.tight_layout(), fig.savefig(path, dpi=130), plt.close(fig)
 
 
+def plot_context(r, s, path):
+    "Per label of the partner, goal and ego: the share of its tiles reconstructed in their frames, and drawn by their code alone."
+    import matplotlib.pyplot as plt
+    rates = context_rates(r, s)
+    if not rates:
+        return False
+    names = list(rates)
+    x = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(1.2 + 0.55 * len(names), 4))
+    ax.bar(x - 0.2, [rates[n][1] for n in names], 0.4, label='reconstructed in its frame', color='#4c72b0')
+    ax.bar(x + 0.2, [rates[n][2] for n in names], 0.4, label='drawn by its code alone (other frames)', color='#dd8452')
+    ax.set_xticks(x, [f'{n}\n({rates[n][0]})' for n in names], rotation=60, ha='right', fontsize=7)
+    ax.set_ylim(0, 1.05), ax.set_ylabel('share of the tiles'), ax.legend(fontsize=7, loc='lower left')
+    ax.set_title(f"does a token draw its tile by itself? ({s.get('agents', '?')} agents; low alone: the neighbours' tokens "
+                 "carry it)", fontsize=8)
+    fig.tight_layout(), fig.savefig(path, dpi=150), plt.close(fig)
+    return True
+
+
 def plot_codebook(r, s, path):
     "The codebook's 2-D PCA: each used code by its main kind, its size by its usage."
     import matplotlib.pyplot as plt
@@ -432,6 +501,8 @@ def plot(cfg, out: Path, run=None) -> None:
     plot_kinds(r, s, figures / 'kinds.png'), drawn.update(kinds=figures / 'kinds.png')
     if plot_agents(r, s, figures / 'agents.png'):
         drawn['agents'] = figures / 'agents.png'
+    if 'pair_drawn' in r and plot_context(r, s, figures / 'context.png'):
+        drawn['context'] = figures / 'context.png'
     for kind in ('empty', 'wall', 'goal', 'partner', 'ego'):
         if plot_gallery(r, s, kind, cfg.gallery.codes, figures / f'gallery_{kind}.png'):
             drawn[f'gallery/{kind}'] = figures / f'gallery_{kind}.png'
