@@ -205,13 +205,16 @@ def tile_errors(self: VQVAETrainer, recons, images):
 @patch
 @torch.no_grad()
 def validate_epoch(self: VQVAETrainer, epoch: int):
-    """The validation loss and perplexity; with the tiles' kinds also each kind's tile accuracy (`val_tiles/<kind>`),
-    the share of frames showing the goal that lose it, and the codes used. Returns the loss and the score to select on."""
+    """The validation loss, the perplexity of the codes over the whole validation set (`perplexity`; the batches' mean,
+    `perplexity_per_batch`, is lower: a batch holds similar frames) and the codes used; with the tiles' kinds also each
+    kind's tile accuracy (`val_tiles/<kind>`) and the share of frames showing the goal that lose it. Returns the loss
+    and the score to select on."""
     self.model.eval()
     total_loss = 0.0
     total_perplexity = 0.0
     hits, counts = torch.zeros(len(TILE_NAMES)), torch.zeros(len(TILE_NAMES))
-    goal_frames, goal_lost, codes = 0, 0, set()
+    goal_frames, goal_lost = 0, 0
+    code_counts = torch.zeros(self.model.num_embeddings)
     goal = TILE_NAMES.index("goal")
 
     for batch_idx, batch in enumerate(self.val_loader):
@@ -224,6 +227,7 @@ def validate_epoch(self: VQVAETrainer, epoch: int):
 
         total_loss += loss_dict["loss"].item()
         total_perplexity += loss_dict["Perplexity"].item()
+        code_counts += torch.bincount(self.model.get_message_indices(real_img).flatten(), minlength=len(code_counts)).cpu()
         if tiles is not None:
             ok = self.tile_errors(recons, input_img) <= self.tile_tolerance
             hits += torch.bincount(tiles[ok], minlength=len(TILE_NAMES)).cpu()
@@ -231,18 +235,18 @@ def validate_epoch(self: VQVAETrainer, epoch: int):
             shown = (tiles == goal).flatten(1).any(1)
             goal_frames += shown.sum().item()
             goal_lost += (((tiles == goal) & ~ok).flatten(1).any(1)).sum().item()
-            codes.update(self.model.get_message_indices(real_img).unique().tolist())
 
     avg_loss = total_loss / len(self.val_loader)
-    avg_perplexity = total_perplexity / len(self.val_loader)
-    logs = {"val_loss": avg_loss, "perplexity": avg_perplexity, "epoch": epoch}
+    usage = code_counts / code_counts.sum()
+    perplexity = torch.exp(-(usage * torch.log(usage + 1e-10)).sum()).item()
+    logs = {"val_loss": avg_loss, "perplexity": perplexity, "perplexity_per_batch": total_perplexity / len(self.val_loader),
+            "val_codes_used": int((code_counts > 0).sum()), "epoch": epoch}
     score = -avg_loss
     if counts.sum() > 0:
         seen = counts > 0
         accuracy = hits[seen] / counts[seen]
         logs.update({f"val_tiles/{TILE_NAMES[k]}": a.item() for k, a in zip(seen.nonzero().flatten().tolist(), accuracy)})
-        logs.update({"val_tiles/mean": accuracy.mean().item(), "val_goal_lost": goal_lost / max(goal_frames, 1),
-                     "val_codes_used": len(codes)})
+        logs.update({"val_tiles/mean": accuracy.mean().item(), "val_goal_lost": goal_lost / max(goal_frames, 1)})
         if self.select == "tiles":
             score = accuracy.mean().item()
     logger.info(f"Epoch {epoch:02d} | " + ", ".join(f"{k}: {v:.4f}" for k, v in logs.items() if k != "epoch"))
