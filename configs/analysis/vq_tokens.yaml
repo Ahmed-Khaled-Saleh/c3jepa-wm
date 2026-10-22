@@ -1,0 +1,34 @@
+# @package _global_
+# configs/analysis/vq_tokens.yaml: what the VQ-VAE's tokens stand for (mains/vq_tokens.py, jobs/vqvae/vq_tokens.sh)
+#   python vq_tokens.py checkpoint=...                                   # compute, save, draw, log to wandb
+#   python vq_tokens.py stage=plot out_dir=... wandb.enabled=false       # redraw from <out_dir>'s saved results
+defaults:
+  - /train/model@model: vqvae    # the VQ-VAE of pipeline/vqvae_pretrain.yaml (pre_quant_activation false)
+  - _self_
+
+stage: all                       # all, compute (tokens, decodes and counts: saved) or plot (the figures, from the saved results)
+checkpoint: ???                  # the VQ-VAE (model_state_dict), e.g. phase-1-vqvae_pretraining/job_2462489/.../best_state_step_8_acc_1.0000.pt
+data_dir: /scratch/project_2009050/datasets/findgoal_layouts   # collect_world.py's dataset (dataset.h5)
+val_layouts: [200, 260]          # the VQ-VAE's validation layouts: none of its training frames
+frames: 20000                    # agent frames drawn from them at random
+seed: 0
+batch_size: 256
+num_workers: 16
+device: cuda
+out_dir: /scratch/project_2009050/expirements/findgoal/vq_tokens   # tokens.npz, summary.json, figures/
+
+gallery:
+  codes: 8                       # per kind of tile, its most used codes shown
+  examples: 10                   # per code, tiles it was given (with a tile of context around each)
+examples: 6                      # frames in the token maps and the swaps (showing the partner and the goal when there are such)
+swap_cell: [2, 3]                # (row, column) whose token the swaps replace: the agent stands at (6, 3)
+
+wandb:
+  enabled: true
+  project: phase-1-vqvae_pretraining   # next to the VQ-VAE's training runs
+  mode: online
+  name: null                     # default: tokens-<SLURM job id>
+
+hydra:
+  run:
+    dir: ${out_dir}/hydra/${now:%Y-%m-%d_%H-%M-%S}
