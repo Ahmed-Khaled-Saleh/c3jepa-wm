@@ -8,7 +8,8 @@ Docs: https://Ahmed-Khaled-Saleh.github.io/c3jepa-wm/comm.evaluation.html.md"""
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+import pickle
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -25,10 +26,10 @@ __all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'LEVELS', 'QUANTILE_LEVELS', '
            'MeanSpread', 'QuantileSet', 'fit_distributional', 'fit_baselines', 'baselines', 'prediction_errors',
            'operating_points', 'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread',
            'transmissions', 'received', 'TableFading', 'network_methods', 'DistributionalChannelInversion',
-           'network_metrics', 'run_network', 'analysis', 'compare_network', 'network_summary', 'estimates', 'snr_sweep',
-           'lagrangian_policy', 'choose_lambda', 'optimal_reference', 'cross_fitted', 'distributional_policies',
-           'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary',
-           'plot_snr']
+           'save_lambda_policies', 'load_lambda_policies', 'network_metrics', 'run_network', 'analysis',
+           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'lagrangian_policy', 'choose_lambda',
+           'optimal_reference', 'cross_fitted', 'distributional_policies', 'evaluate_power_control', 'motion_summary',
+           'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -436,6 +437,13 @@ class DistributionalChannelInversion(LearnedChannelInversion):
         super().__init__(None, walls, positions, headings, history, target_snr_db, 0.0, fallback_power)
         self.dist, self.lam, self.g_min = dist, lam, g_min
 
+    @classmethod
+    def from_saved(cls, policies: dict, name: str, target: float, walls, positions, headings):
+        "The policy `name` at `target` from `load_lambda_policies`' result, for a layout's `walls` (deployment: τ = ∞)."
+        p, b = policies['policies'][name], policies['budget']
+        return cls(p['dist'], p['lam'][float(target)], b.g_min, walls, positions, headings, policies['history'],
+                   b.snr_target_db, b.max_power_w)
+
     def allocate(self, gain, noise_power, link=None, message=None):
         past = self._past.setdefault((link.sender, link.receiver), [])
         if len(past) < self.history or len(self._rounds) < 3:
@@ -447,6 +455,22 @@ class DistributionalChannelInversion(LearnedChannelInversion):
             power, send = units * 10 ** (self.target_snr_db / 10) * noise_power, units > 0
         past.append((float(gain), self._round))
         return power, send
+
+def save_lambda_policies(path, fitted: dict, comparison: dict, saved: dict):
+    """Save `evaluate_power_control`'s λ-policies (its 'distributional'): each predicted distribution as calibrated on
+    the calibration layouts, with its λ per target, and `saved`'s history and budget (`DistributionalChannelInversion.from_saved`)."""
+    policies = {name: dict(dist=fitted['distributional'][name], lam={float(t): float(o['lam']) for t, o in by_target.items()})
+                for name, by_target in comparison.get('distributional', {}).items()}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'wb') as f:
+        pickle.dump(dict(policies=policies, history=saved['history'], budget=asdict(saved['budget'])), f)
+
+def load_lambda_policies(path) -> dict:
+    "What `save_lambda_policies` saved (the budget as a `Budget`)."
+    with open(path, 'rb') as f:
+        out = pickle.load(f)
+    out['budget'] = Budget(**out['budget'])
+    return out
 
 def network_metrics(rows: list, budget: Budget, tokens: int, cost: list) -> dict:
     "The metrics of a network run from its results' rows: (gain, power, sent, arrived, wrong tokens)."

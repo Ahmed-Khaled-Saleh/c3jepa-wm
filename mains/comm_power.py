@@ -38,6 +38,7 @@ from c3jepa_wm.comm.evaluation import (LEARNED, OPTIMAL, motion_summary, compare
                                        layout_summary, network_summary, plot_frontiers, plot_layout_spread, plot_snr, snr_summary,
                                        summary)
 from c3jepa_wm.comm.power_control import Budget, calibrate, evaluate, load_power_control, predict_on, save_power_control
+from c3jepa_wm.comm.evaluation import save_lambda_policies
 from c3jepa_wm.comm.continual import (METHOD_COLUMNS, continual_rows, continual_summary, evaluate_continual, plot_continual,
                                       task_columns)
 from c3jepa_wm.comm.sequence import fit_model, predictor_name
@@ -566,6 +567,9 @@ def main(cfg: DictConfig):
                     f"reach Γ (target {cfg.calibration.target}), {result['power']:.2f}× perfect CSI's power, "
                     f"{result['withheld']:.3f} withheld; {result['servable']:.3f} servable")
         comparison, fitted = judge(cfg, saved, sets, snr_sweep=True)
+        if comparison.get('distributional'):                 # Proposition 1's policies, for deployment (deploy.py: lambda-policy)
+            save_lambda_policies(outputs / 'lambda_policy.pkl', fitted, comparison, saved)
+            logger.info(f"the λ-policies saved: {outputs / 'lambda_policy.pkl'} ({', '.join(comparison['distributional'])})")
         sweep = comparison.pop('snr', None)
         out = dict(calibration=c, test=result, comparison=comparison, layouts=seeds)
         logger.info('\n' + summary(comparison))
@@ -730,7 +734,8 @@ def main(cfg: DictConfig):
                          if k.split('/')[1] in ('reliability', 'power', 'layout_p10')
                          for stat, v in (('mean', m), ('std', s))})
         (outputs / 'results.json').write_text(json.dumps(out, indent=1, default=str))
-        log.files('comm-power-results', [outputs / 'results.json', outputs / 'power_control.pkl', *images.values()])
+        log.files('comm-power-results', [outputs / 'results.json', outputs / 'power_control.pkl',
+                                         *[outputs / 'lambda_policy.pkl'] * (outputs / 'lambda_policy.pkl').exists(), *images.values()])
 
     if 'continual' in stages:                       # the predictor learning over a stream of layouts (c3jepa_wm.comm.continual)
         start, c = time.time(), cfg.continual

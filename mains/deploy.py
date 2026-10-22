@@ -25,6 +25,7 @@ from stable_marl.planning.solver import CategoricalCEMSolver
 from stable_marl.policy import PlanConfig, WorldModelPolicy
 
 from c3jepa_wm.comm.channel_data import PairCache, fading_correlation
+from c3jepa_wm.comm.evaluation import load_lambda_policies
 from c3jepa_wm.comm.power_control import load_power_control
 from c3jepa_wm.evaluators.deploy import ActionSubset, C3WMCommunication, C3WMCost, c3wm_link, deploy, jepa_transform, vq_tokens
 from c3jepa_wm.planners.mpc import DiscreteCEMSolver
@@ -61,8 +62,12 @@ def main(cfg: DictConfig):
     world_kwargs = {k: v for k, v in env_cfg.items() if k not in ('_target_', 'variations')}
     world_kwargs['max_steps'] = cfg.max_steps
     layouts = list(range(*cfg.layouts))
-    saved = load_power_control(to_absolute_path(cfg.checkpoints.power_control)) if 'learned' in cfg.methods or \
-        'perfect CSI' in cfg.methods else None
+    over_link = {'learned', 'perfect CSI', 'lambda-policy'} & set(cfg.methods)
+    saved = load_power_control(to_absolute_path(cfg.checkpoints.power_control)) if over_link else None
+    policies = None
+    if 'lambda-policy' in cfg.methods:                              # comm_power's, next to its power_control.pkl by default
+        path = cfg.checkpoints.lambda_policy or Path(to_absolute_path(cfg.checkpoints.power_control)).parent / 'lambda_policy.pkl'
+        policies = load_lambda_policies(to_absolute_path(str(path)))
     trace = OmegaConf.to_container(cfg.tracing, resolve=True)
     caches = {}
 
@@ -77,9 +82,10 @@ def main(cfg: DictConfig):
     def make_world(method):
         silent = method == 'no communication'
         link = None if method in ('no communication', 'perfect channel') else \
-            c3wm_link(method, cache_for, saved, crc=cfg.link.crc, rho=rho(cfg), rician=cfg.link.rician)
+            c3wm_link(method, cache_for, saved, crc=cfg.link.crc, rho=rho(cfg), rician=cfg.link.rician, policies=policies,
+                      policy=cfg.link.lambda_policy.name, target=cfg.link.lambda_policy.target)
         return sm.World(cfg.env_id, num_envs=cfg.num_envs, goal_conditioned=True, **world_kwargs,
-                        pre_wrappers=[lambda e: LayoutWrapper(e, layouts),
+                        pre_wrappers=[lambda e: LayoutWrapper(e, layouts, variations=tuple(env_cfg.get('variations') or ())),
                                       lambda e: C3WMCommunication(e, None if silent else tokens, link,
                                                                   max_age=jepa.predictor.max_age),
                                       lambda e: ActionSubset(e, cfg.actions)])

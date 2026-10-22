@@ -182,18 +182,22 @@ def vq_tokens(vqvae, device="cpu") -> Callable:
 
 # %% ../../nbs/07e_evaluators.deploy.ipynb #e700000c
 def c3wm_link(method: str, cache_for: Callable, saved: dict | None = None, crc: bool = True, rho: float = 0.9,
-              rician: bool = True) -> Callable:
+              rician: bool = True, policies: dict | None = None, policy: str | None = None, target: float = 0.95) -> Callable:
     """`C3WMCommunication`'s `link` for a method: 'perfect channel' (every message arrives), or C3-WM's link
     (`comm.power_control.c3wm_link`: the layout's channel, `OnlineRicianFading`, the power, uncoded BPSK, a CRC if
-    `crc`) with 'perfect CSI' channel inversion or the 'learned' power control (`saved`: `load_power_control`'s, with
-    its κ and τ). `cache_for(layout)` -> the layout's `PairCache`."""
+    `crc`) with 'perfect CSI' channel inversion, the 'learned' power control (`saved`: `load_power_control`'s, with
+    its κ and τ), or the 'lambda-policy' (Proposition 1's policy: `policies`, `comm.evaluation.load_lambda_policies`'s,
+    its `policy` at `target`; it withholds by itself, τ = ∞). `cache_for(layout)` -> the layout's `PairCache`."""
     from comm_core import ChannelInversion
     from c3jepa_wm.comm.power_control import LearnedChannelInversion, c3wm_link as blocks
+    from c3jepa_wm.comm.evaluation import DistributionalChannelInversion
     if method == 'perfect channel':
         return lambda layout, env: {}
-    if method not in ('perfect CSI', 'learned'):
-        raise ValueError(f"method: 'perfect channel', 'perfect CSI' or 'learned', not {method!r}")
-    b = saved['budget']
+    if method not in ('perfect CSI', 'learned', 'lambda-policy'):
+        raise ValueError(f"method: 'perfect channel', 'perfect CSI', 'learned' or 'lambda-policy', not {method!r}")
+    if method == 'lambda-policy' and (policies is None or policy not in policies['policies']):
+        raise ValueError(f"'lambda-policy' needs `policies` with {policy!r}: {list((policies or {}).get('policies', {}))}")
+    b = policies['budget'] if method == 'lambda-policy' else saved['budget']
 
     def link(layout, env):
         cache = cache_for(layout)
@@ -201,6 +205,10 @@ def c3wm_link(method: str, cache_for: Callable, saved: dict | None = None, crc: 
         heads = lambda: {node_id(i): int(agent.state.dir) for i, agent in enumerate(env.agents)}
         if method == 'perfect CSI':
             control, tau = ChannelInversion(b.snr_target_db), 0.0
+        elif method == 'lambda-policy':
+            control = DistributionalChannelInversion.from_saved(policies, policy, target, cache.walls,
+                                                                lambda: fading.node_positions, heads)
+            tau = math.inf
         else:
             control = LearnedChannelInversion.from_saved(saved, cache.walls, lambda: fading.node_positions, heads)
             tau = saved['calibration']['tau_db']

@@ -20,17 +20,22 @@ num_envs: 4                      # episodes played at once
 max_steps: 150                   # an episode's budget (the env's)
 device: cuda
 
-methods: ['no communication', 'perfect channel', 'perfect CSI', 'learned']
+methods: ['no communication', 'perfect channel', 'perfect CSI', 'learned', 'lambda-policy']
                                  # no communication: nothing arrives (the model's 'nothing received'); perfect channel: everything
-                                 # arrives; perfect CSI / learned: the link with that power control (learned: power_control's κ, τ)
+                                 # arrives; perfect CSI / learned / lambda-policy: the link with that power control (learned:
+                                 # power_control's predictor, κ and τ; lambda-policy: Proposition 1's policy, link.lambda_policy)
 
 checkpoints:
   jepa: ???                      # the fine-tuned world model (wm_finetune: wm_model_state_dict)
   vqvae: ???                     # the VQ-VAE its tokens came from (model_state_dict)
   power_control: ???             # comm_power's power_control.pkl (load_power_control): the run whose predictor, κ and τ to use
+  lambda_policy: null            # comm_power's lambda_policy.pkl (null: the one next to power_control)
 
 link:                            # as configs/comm's
   crc: true                      # a message with a wrong bit is dropped (an erasure, as in the world model's training)
+  lambda_policy:                 # the lambda-policy method's: one of lambda_policy.pkl's policies, at one of its targets
+    name: 'mean + spread, λ-policy'
+    target: 0.95
   rician: true                   # Rician fading on the large-scale channel (link.fading: rician)
   step_seconds: 1.0
   doppler_hz: 0.1
