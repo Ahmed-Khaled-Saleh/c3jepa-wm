@@ -15,7 +15,7 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 
 
 module --force purge
-module load python-pytorch
+module load python-pytorch/2.10
 source /scratch/project_2009050/rl/bin/activate
 cd /projappl/project_2009050/c3jepa-wm/mains/
 
