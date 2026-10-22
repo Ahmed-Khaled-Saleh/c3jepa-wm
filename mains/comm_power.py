@@ -374,6 +374,7 @@ def metrics(comparison: dict) -> list:
     for name, by_target in _policies(comparison).items():                # Proposition 1's policy: the oracle's, the predicted ones
         for t, o in by_target.items():
             rows += [(name, t, k, o[k]) for k in ('reliability', 'power', 'withheld')]
+            rows += [(name, t, f'layout_{k}', o[f'layout_{k}']) for k in LAYOUT_METRICS if f'layout_{k}' in o]
             rows += [(name, t, f'motion/{part}/{k}', m[k]) for part, m in o['motion'].items() for k in ('reliability', 'power')]
     return rows
 
@@ -567,8 +568,9 @@ def main(cfg: DictConfig):
             log.table('evaluate/optimal', ['target', 'reliability', 'power', 'withheld', 'lambda'],
                       [[t, o['reliability'], o['power'], o['withheld'], o['lam']] for t, o in comparison['optimal'].items()])
         if comparison.get('distributional'):
-            log.table('evaluate/distributional', ['method', 'target', 'reliability', 'power', 'withheld', 'lambda'],
-                      [[n, t, o['reliability'], o['power'], o['withheld'], o['lam']]
+            log.table('evaluate/distributional', ['method', 'target', 'reliability', 'power', 'withheld', 'lambda', 'layout_min',
+                                                  'layout_p10', 'layout_below'],
+                      [[n, t, o['reliability'], o['power'], o['withheld'], o['lam'], *(o.get(f'layout_{k}') for k in ('min', 'p10', 'below'))]
                        for n, by_target in comparison['distributional'].items() for t, o in by_target.items()])
         if comparison.get('layout_coverage'):
             logger.info('\n' + guarantee_summary(comparison))

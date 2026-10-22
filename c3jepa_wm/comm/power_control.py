@@ -247,23 +247,26 @@ class LearnedChannelInversion(PowerControl):
             rows.append(step_features(self.walls, at[link.sender], at[link.receiver], g, moved(link.sender), moved(link.receiver)))
         return np.array(rows, np.float32)
 
+    def _rows(self, link, past) -> np.ndarray:
+        "The features to each of the receiver's possible cells (`features`'; the history-only model: one row)."
+        (earlier, _), (before, heads), (now, _) = self._rounds[-3:]
+        gains = [g for g, _ in past[-self.history:][::-1]]
+        tx, rx = now[link.sender], before[link.receiver]
+        moved = (tx != before[link.sender], rx != earlier[link.receiver])
+        if not self.geometry:
+            return np.array([[*db(gains), float(moved[0]), float(moved[1])]])
+        d = DIRS[int(heads[link.receiver])]
+        free = lambda c: 0 <= c[0] < self.walls.shape[0] and 0 <= c[1] < self.walls.shape[1] and not self.walls[c]
+        possible = [c for c in (rx, (rx[0] + d[0], rx[1] + d[1])) if free(c) and c != tx] or [rx]
+        return np.array([features(self.walls, tx, c, gains, *moved) for c in possible])
+
     def allocate(self, gain, noise_power, link=None, message=None):
         past = self._past.setdefault((link.sender, link.receiver), [])
         if len(past) < self.history or len(self._rounds) < 3:
             self.predicted = None
             power = self.fallback_power
         else:
-            (earlier, _), (before, heads), (now, _) = self._rounds[-3:]
-            gains = [g for g, _ in past[-self.history:][::-1]]
-            tx, rx = now[link.sender], before[link.receiver]
-            moved = (tx != before[link.sender], rx != earlier[link.receiver])
-            if self.geometry:
-                d = DIRS[int(heads[link.receiver])]
-                free = lambda c: 0 <= c[0] < self.walls.shape[0] and 0 <= c[1] < self.walls.shape[1] and not self.walls[c]
-                possible = [c for c in (rx, (rx[0] + d[0], rx[1] + d[1])) if free(c) and c != tx] or [rx]
-                X = np.array([features(self.walls, tx, c, gains, *moved) for c in possible])
-            else:
-                X = np.array([[*db(gains), float(moved[0]), float(moved[1])]])
+            X = self._rows(link, past)
             S = np.repeat(self._steps(past, link)[None], len(X), 0) if getattr(self.model, 'steps', False) else None
             self.predicted = 10 ** (_predict(self.model, X, S).min() / 10)
             power = 10 ** ((self.target_snr_db + self.margin_db) / 10) * noise_power / self.predicted

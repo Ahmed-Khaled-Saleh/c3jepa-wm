@@ -15,7 +15,8 @@ from pathlib import Path
 import numpy as np
 
 from .channel_data import interior_walls, layout_edits, make_env, nearest_layout, reset_layout
-from .evaluation import LEARNED, baselines, layout_intervals, prediction_errors, transmissions
+from .evaluation import (LEARNED, _distribution_options, _optimal_choice, baselines, choose_lambda, cross_fitted,
+                                       layout_intervals, prediction_errors, transmissions)
 from .power_control import MARGINS_DB, TAUS_DB, calibrate, calibrate_layouts, predict_gain, predict_on
 
 # %% auto #0
@@ -286,7 +287,8 @@ def evaluate_deployment(
     layout_confidence: float | None = None, # ... with this probability over the calibration layouts (None: in expectation)
 ) -> dict:
     """`groups`: per group its layouts, distance, edits and walls; `methods`: per method its predictor's errors per
-    group, and per target its parameters and `judge`'s metrics per group (and `all`)."""
+    group, and per target its parameters and `judge`'s metrics per group (and `all`); with `fitted`'s distributional
+    predictors, also their λ-policies (λ chosen on the calibration layouts, cross-fitted)."""
     budget, g_min = saved['budget'], saved['budget'].g_min
     cal, dep = data['calibration'], data['deployment']
     predictors = {LEARNED: lambda d: predict_on(saved['model'], d),
@@ -348,6 +350,16 @@ def evaluate_deployment(
                                                           groups=metrics(power, sent, target))
         for method, per_target in kinds.items():
             out['methods'][method] = dict(predictor=name, prediction=errors, targets=per_target)
+    for name, dist in (fitted or {}).get('distributional', {}).items():   # Proposition 1's policy on a predicted distribution
+        cal_options, cal_order = cross_fitted(dist, cal, g_min)
+        dep_options = _distribution_options(dist, dep, g_min)
+        per_target = {}
+        for target in targets:
+            lam = choose_lambda(cal_options, cal_order, g_min, target + slack)
+            power = _optimal_choice(dep_options, lam)
+            per_target[target] = dict(margin_db=math.nan, tau_db=math.nan, lam=lam, met_on_calibration=True,
+                                      groups=metrics(power, power > 0, target))
+        out['methods'][name] = dict(predictor=name, prediction={}, targets=per_target)
     return out
 
 # %% ../../nbs/09d_comm.deployment.ipynb #d3a1b2c5

@@ -23,10 +23,11 @@ __all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'LEVELS', 'QUANTILE_LEVELS', '
            'OUTAGES', 'past_gains', 'rician_quantile', 'rician_tail', 'DecomposedPredictor', 'fit_decomposed',
            'MeanSpread', 'QuantileSet', 'fit_distributional', 'fit_baselines', 'baselines', 'prediction_errors',
            'operating_points', 'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread',
-           'transmissions', 'received', 'TableFading', 'network_methods', 'network_metrics', 'run_network', 'analysis',
-           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'lagrangian_policy', 'optimal_reference',
-           'distributional_policies', 'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary',
-           'plot_frontiers', 'snr_summary', 'plot_snr']
+           'transmissions', 'received', 'TableFading', 'network_methods', 'DistributionalChannelInversion',
+           'network_metrics', 'run_network', 'analysis', 'compare_network', 'network_summary', 'estimates', 'snr_sweep',
+           'lagrangian_policy', 'choose_lambda', 'optimal_reference', 'cross_fitted', 'distributional_policies',
+           'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary',
+           'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -414,7 +415,37 @@ def network_methods(
             out[f'{name}, κ, τ'] = method(make(p['margin_db']), p['margin_db'], p['tau_db'], name)
     p = points[LEARNED]
     out[f'{LEARNED}, κ, τ, CRC'] = method(makers[LEARNED](p['margin_db']), p['margin_db'], p['tau_db'], LEARNED, crc=True)
+    for name, dist in fitted.get('distributional', {}).items():            # Proposition 1's policy on a predicted distribution
+        if comparison is None or target not in comparison.get('distributional', {}).get(name, {}):
+            continue
+        lam = comparison['distributional'][name][target]['lam']
+        make = lambda walls, positions, headings, dist=dist, lam=lam: DistributionalChannelInversion(
+            dist, lam, b.g_min, walls, positions, headings, L, snr, rho)
+        out[f'{name}, λ'] = dict(method(make, math.nan, math.inf, name),
+                                 powers=lambda d, dist=dist, lam=lam: _optimal_choice(_distribution_options(dist, d, b.g_min), lam))
     return out
+
+class DistributionalChannelInversion(LearnedChannelInversion):
+    """Proposition 1's policy on a predicted distribution (`MeanSpread`, `QuantileSet`) at `lam`: the power minimizing
+    power - λ P(success) over the distribution's quantiles and ρ_max, or none (not sent); ρ_max (`fallback_power`)
+    while a link has fewer than `history` past gains."""
+
+    def __init__(self, dist, lam: float, g_min: float, walls, positions, headings, history: int = 4,
+                 target_snr_db: float = 10.0, fallback_power: float = math.inf):
+        super().__init__(None, walls, positions, headings, history, target_snr_db, 0.0, fallback_power)
+        self.dist, self.lam, self.g_min = dist, lam, g_min
+
+    def allocate(self, gain, noise_power, link=None, message=None):
+        past = self._past.setdefault((link.sender, link.receiver), [])
+        if len(past) < self.history or len(self._rounds) < 3:
+            power, send = self.fallback_power, True
+        else:
+            X = self._rows(link, past)
+            data = {'X_possible': X[None], 'possible_mask': np.ones((1, len(X)), bool)}
+            units = float(_optimal_choice(_distribution_options(self.dist, data, self.g_min), self.lam)[0])  # × Γσ²
+            power, send = units * 10 ** (self.target_snr_db / 10) * noise_power, units > 0
+        past.append((float(gain), self._round))
+        return power, send
 
 def network_metrics(rows: list, budget: Budget, tokens: int, cost: list) -> dict:
     "The metrics of a network run from its results' rows: (gain, power, sent, arrived, wrong tokens)."
@@ -483,10 +514,16 @@ def run_network(
             cost.append(net.metrics.summary().bits_sent / 8 / 1000)
     return network_metrics(rows, budget, tokens, cost)
 
-def analysis(estimate, gain, budget: Budget, margin_db: float, tau_db: float, crc: bool = False, message_bits: int = 392) -> dict:
-    "What the analysis expects of a method on these transmissions: reached, power, withheld, intact, garbled (BPSK's bit errors)."
-    r = evaluate(estimate, gain, budget.g_min, margin_db, tau_db)
-    power, sent = transmissions(estimate, budget.g_min, margin_db, tau_db)
+def analysis(estimate, gain, budget: Budget, margin_db: float, tau_db: float, crc: bool = False, message_bits: int = 392,
+             power=None) -> dict:
+    """What the analysis expects of a method on these transmissions: reached, power, withheld, intact, garbled (BPSK's
+    bit errors); from ĝ, κ and τ, or from each transmission's `power` (units of Γσ², 0: withheld)."""
+    if power is None:
+        r = evaluate(estimate, gain, budget.g_min, margin_db, tau_db)
+        power, sent = transmissions(estimate, budget.g_min, margin_db, tau_db)
+    else:
+        power, sent = np.asarray(power, float), np.asarray(power) > 0
+        r = _judged(power, {'gain': gain}, budget.g_min)
     snr = 10 ** (budget.snr_target_db / 10) * power * gain
     clean = (1 - 0.5 * np.vectorize(math.erfc)(np.sqrt(snr))) ** message_bits    # P(no bit wrong)
     servable = gain >= budget.g_min
@@ -518,8 +555,9 @@ def compare_network(
     for name, m in methods.items():
         out[name] = dict(margin_db=m['margin_db'], tau_db=m['tau_db'], crc=m['crc'],
                          network=run_network(m, saved, layout_dir, trajectory_dir, seeds, **network),
-                         analysis=analysis(predict[m['predictor']](test), test['gain'], saved['budget'], m['margin_db'],
-                                           m['tau_db'], m['crc'], network.get('message_bits', 392)))
+                         analysis=analysis(None if 'powers' in m else predict[m['predictor']](test), test['gain'], saved['budget'],
+                                           m['margin_db'], m['tau_db'], m['crc'], network.get('message_bits', 392),
+                                           m['powers'](test) if 'powers' in m else None))
     return out
 
 def network_summary(results: dict) -> str:
@@ -627,24 +665,33 @@ def lagrangian_policy(
     slack: float = 0.0, # λ chosen for target + slack
 ) -> dict:
     """Proposition 1's policy on the options: per transmission the power minimizing power - λ P(success), or none, λ the
-    smallest whose reliability on the calibration transmissions reaches `target` + `slack`. Per target: λ, and on the
-    test transmissions the reliability, power (× perfect CSI's) and withheld share, also after a move and while still
-    (`motion`, on the large-scale channel)."""
-    scale = float(np.mean(1 / cal['gain'][cal['gain'] >= g_min]))
+    smallest whose reliability on the calibration transmissions reaches `target` + `slack` (`choose_lambda`). Per target:
+    λ, and on the test transmissions the reliability, power (× perfect CSI's) and withheld share, the reliability per
+    layout (`layout_*`, `comm.deployment.judge`'s), also after a move and while still (`motion`, on the large-scale
+    channel)."""
+    from c3jepa_wm.comm.deployment import judge                 # (it imports this module)
     parts = (('moved', test['fresh']), ('still', ~test['fresh'])) if 'fresh' in test else ()
     out = {}
     for target in targets:
-        lo, hi = -4.0, 8.0                                        # log10 of λ over the mean perfect-CSI power
-        for _ in range(48):
-            mid = (lo + hi) / 2
-            if _judged(_optimal_choice(cal_options, scale * 10 ** mid), cal, g_min)['reliability'] >= target + slack:
-                hi = mid
-            else:
-                lo = mid
-        power = _optimal_choice(test_options, scale * 10 ** hi)
-        out[target] = dict(lam=scale * 10 ** hi, **_judged(power, test, g_min),
+        lam = choose_lambda(cal_options, cal, g_min, target + slack)
+        power = _optimal_choice(test_options, lam)
+        layouts = judge(power, power > 0, test['gain'], test['layout'], g_min, target, episode=test.get('episode'))
+        out[target] = dict(lam=lam, **_judged(power, test, g_min),
+                           **{k: v for k, v in layouts.items() if k.startswith('layout_')},
                            motion={part: dict(share=float(m.mean()), **_judged(power, test, g_min, m)) for part, m in parts if m.any()})
     return out
+
+def choose_lambda(options: tuple, data: dict, g_min: float, reliability: float) -> float:
+    "The smallest λ for which `_optimal_choice` on `options` reaches `reliability` on `data`'s servable transmissions (bisection)."
+    scale = float(np.mean(1 / data['gain'][data['gain'] >= g_min]))
+    lo, hi = -4.0, 8.0                                            # log10 of λ over the mean perfect-CSI power
+    for _ in range(48):
+        mid = (lo + hi) / 2
+        if _judged(_optimal_choice(options, scale * 10 ** mid), data, g_min)['reliability'] >= reliability:
+            hi = mid
+        else:
+            lo = mid
+    return scale * 10 ** hi
 
 def optimal_reference(
     cal: dict, test: dict, # `build_dataset`'s, on the large-scale channel
@@ -667,18 +714,39 @@ def _distribution_options(dist, data: dict, g_min: float) -> tuple:
     cap = 1 - dist.cdf(data, float(db(g_min)))
     return np.c_[power, np.full(len(power), 1 / g_min)], np.c_[success, cap]
 
+def _subset(data: dict, keep: np.ndarray) -> dict:
+    return {k: v[keep] for k, v in data.items()}
+
+def cross_fitted(dist, cal: dict, g_min: float) -> tuple:
+    """The calibration transmissions' options (`_distribution_options`) with `dist` calibrated on the other half of the
+    calibration layouts (each half in turn), and those transmissions in the same order; `dist` is left calibrated on all
+    of them. Choosing λ on them (`choose_lambda`) avoids judging the distribution on the transmissions it was shaped on."""
+    ids = np.unique(cal['layout'])
+    if len(ids) < 2:
+        dist.calibrate(cal)
+        return _distribution_options(dist, cal, g_min), cal
+    half = np.isin(cal['layout'], ids[::2])
+    options, parts = [], []
+    for fit_on, judged_on in ((half, ~half), (~half, half)):
+        dist.calibrate(_subset(cal, fit_on))
+        options.append(_distribution_options(dist, _subset(cal, judged_on), g_min))
+        parts.append(_subset(cal, judged_on))
+    dist.calibrate(cal)
+    return (tuple(np.concatenate([o[i] for o in options]) for i in range(2)),
+            {k: np.concatenate([p[k] for p in parts]) for k in cal})
+
 def distributional_policies(
     fitted: dict, # `fit_baselines`' result, with `distributional`
     cal: dict, test: dict, # `build_dataset`'s
     g_min: float, targets=(0.9, 0.95, 0.99), slack: float = 0.0,
 ) -> dict:
-    """name -> `lagrangian_policy` on each distributional predictor's distributions, calibrated (its shape or its
-    quantiles) and λ chosen on the calibration transmissions."""
+    """name -> `lagrangian_policy` on each distributional predictor's distributions: λ chosen on the calibration
+    transmissions cross-fitted (`cross_fitted`), the test transmissions' with the distribution calibrated on all of them."""
     out = {}
     for name, dist in fitted.get('distributional', {}).items():
-        dist.calibrate(cal)
-        out[name] = lagrangian_policy(_distribution_options(dist, cal, g_min), _distribution_options(dist, test, g_min),
-                                      cal, test, g_min, targets, slack)
+        cal_options, cal_order = cross_fitted(dist, cal, g_min)
+        out[name] = lagrangian_policy(cal_options, _distribution_options(dist, test, g_min), cal_order, test, g_min,
+                                      targets, slack)
     return out
 
 def evaluate_power_control(
