@@ -5,12 +5,17 @@
 #   python deploy.py                                             # every method, the test layouts
 #   python deploy.py methods=[learned] episodes=60 planner.num_samples=256
 defaults:
-  - /comm/env@env: findgoal      # the env of configs/comm (the layouts traced there)
+  - /comm/env@env: findgoal      # FindGoal as the world model was trained on it (configs/collect's: env.variations below)
   - /train/model@jepa: control_jepa
   - /train/model@vqvae: vqvae
   - _self_
 
-data_dir: /scratch/project_2009050/datasets/findgoal/comm_power_1m   # comm_power's: layouts/ (the traced pairs), runs/
+env:
+  variations: []                 # the world model's layouts: FindGoal's fixed numbers of walls (6 blocks, 10 single walls), as
+                                 # collect_world.py's dataset; comm_power draws them per seed (other layouts for the same seeds)
+
+data_dir: /scratch/project_2009050/datasets/findgoal/deploy_fixed   # layouts/: these layouts' pairs, traced as they are visited
+                                 # (tracing as configs/comm's, below); runs/
 out_dir: ${data_dir}/runs/deploy  # results.json
 env_id: MultiGrid-FindGoal-15x15-v0
 layouts: [230, 260]              # the test layouts (configs/comm's split: train 0-200, calibration 200-230, test 230-260)
@@ -29,6 +34,7 @@ checkpoints:
   jepa: ???                      # the fine-tuned world model (wm_finetune: wm_model_state_dict)
   vqvae: ???                     # the VQ-VAE its tokens came from (model_state_dict)
   power_control: ???             # comm_power's power_control.pkl (load_power_control): the run whose predictor, κ and τ to use
+                                 # (fit and calibrated on comm_power's layouts: here applied to the world model's)
   lambda_policy: null            # comm_power's lambda_policy.pkl (null: the one next to power_control)
 
 link:                            # as configs/comm's

@@ -7,7 +7,8 @@
 #   python collect_world.py episodes_per_layout=2 workers=4 out_dir=./data/findgoal_test
 # Then the channel: python comm_power.py data_dir=<out_dir> stage=trace (it reads <out_dir>/trajectories).
 defaults:
-  - /comm/env@env: findgoal      # the env of configs/comm: the layouts played here are the layouts traced there
+  - /comm/env@env: findgoal      # FindGoal with its fixed numbers of walls (env.variations: []): the world model's layouts;
+                                 # configs/comm draws the numbers per seed, so its layouts differ for the same seeds
   - _self_
 
 stage: all                       # collect | merge | trajectories | all (in this order)
