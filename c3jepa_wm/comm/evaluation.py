@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+from threadpoolctl import threadpool_limits
 
 from .channel_data import ChannelTable, db, episode_fading, table_path
 from .power_control import (Budget, LearnedChannelInversion, TAUS_DB, c3wm_link, calibrate, calibrate_layouts,
@@ -476,7 +477,14 @@ def run_network(
     skip: int | None = None, # The steps of each episode not judged (as the data's: the history it was built with); None: the history
 ) -> dict:
     """`network_metrics` of one method through C3-WM's link as blocks, on the trajectories of `seeds` (after each
-    episode's first `skip` steps)."""
+    episode's first `skip` steps). The predictors run one transmission at a time, on one thread: a thread pool per
+    single-row prediction costs far more than the prediction (hours over a run on a node's 72 cores)."""
+    with threadpool_limits(1):
+        return _run_network(method, saved, layout_dir, trajectory_dir, seeds, fading, fading_correlation, symmetric,
+                            message_bits, bits_per_token, seed, channel, skip)
+
+def _run_network(method, saved, layout_dir, trajectory_dir, seeds, fading, fading_correlation, symmetric, message_bits,
+                 bits_per_token, seed, channel, skip) -> dict:
     from comm_core import FullMeshTopology, IdealProtocol, Message, Network, Node, PipelineBackend
     budget, history = saved['budget'], saved['history'] if skip is None else skip
     rng = np.random.default_rng([seed, 1])                       # the payloads and the bits: the same for every method
