@@ -6,7 +6,7 @@ Docs: https://Ahmed-Khaled-Saleh.github.io/c3jepa-wm/data.datasets.html.md"""
 
 # %% auto #0
 __all__ = ['TILE_NAMES', 'EGO', 'MultiAgentPOVDataset', 'FindGoalPOVDataset', 'MultiAgentWorldModelDataset',
-           'MultiAgentPlanningDataset']
+           'FindGoalWorldModelDataset', 'MultiAgentPlanningDataset']
 
 # %% ../../nbs/01a_data.datasets.ipynb #5e1f1157
 import os
@@ -262,6 +262,87 @@ class MultiAgentWorldModelDataset(Dataset):
             self.file.close()
             self.file = None
     
+
+# %% ../../nbs/01a_data.datasets.ipynb #d2f0b002
+def _relative_pose(sender_pos, sender_dir, receiver_pos, receiver_dir):
+    "`models.jepa.relative_pose` in numpy: (cells ahead, cells to the right, quarter turns)."
+    vec = np.array(((1, 0), (0, 1), (-1, 0), (0, -1)))
+    ahead = vec[receiver_dir]
+    right = np.stack([-ahead[..., 1], ahead[..., 0]], -1)
+    d = sender_pos - receiver_pos
+    return np.stack([(d * ahead).sum(-1), (d * right).sum(-1), (sender_dir - receiver_dir) % 4], -1)
+
+class FindGoalWorldModelDataset(Dataset):
+    "Windows of a receiver's frames and actions, with the other agents' messages before and during them, from `collect_world.py`'s dataset."
+
+    def __init__(self,
+                 h5_path, # The dataset (`<out_dir>/dataset.h5`)
+                 split: str = "train", # 'train' or 'val'
+                 val_layouts=(200, 260), # The validation layouts: reset seeds [start, stop)
+                 history_size: int = 3, # Frames fed to the predictor
+                 num_preds: int = 1, # Frames predicted after them
+                 tokens=None, # Each frame's VQ tokens, (steps, agents, 49) (`encode_tokens`); None: no messages
+                 max_age: int = 8, # Messages sent this many steps before the window are included
+                 transform=None, # Applied to each frame
+                ):
+        assert split in ["train", "val"], "split must be 'train' or 'val'"
+        self.h5_path, self.transform, self.file = h5_path, transform, None
+        self.history_size, self.num_preds, self.max_age = history_size, num_preds, max_age
+        self.tokens = np.load(tokens, mmap_mode="r") if isinstance(tokens, (str, os.PathLike)) else tokens
+        with h5py.File(h5_path, "r") as f:
+            layout, done, action = f["layout"][:, 0], f["terminated"][:], f["action"][:]
+            self.position, self.direction = f["position"][:], f["direction"][:]
+            offset, length = f["ep_offset"][:], f["ep_len"][:]
+        self.done = done
+        self.episode_start = np.repeat(offset, length)                 # each row's episode's first row
+        val = (layout >= val_layouts[0]) & (layout < val_layouts[1])
+        keep = val if split == "val" else ~val
+        T, span = history_size, history_size + num_preds
+        playing = ~done & np.isfinite(action)                          # (rows, agents): acting at this row
+        index = []
+        for o, n in zip(offset, length):
+            if n < span or not keep[o]:
+                continue
+            ok = playing[o:o + n]
+            run = np.cumsum(np.vstack([np.zeros((1, ok.shape[1]), int), ~ok]), axis=0)
+            starts = np.arange(n - span + 1)
+            good = (run[starts + T] - run[starts]) == 0                 # acting at every history step
+            index += [(o + s, a) for s, a in np.argwhere(good)]
+        self.index = np.array(index, dtype=np.int64).reshape(-1, 2)    # (first row, receiver)
+        self.agents = done.shape[1]
+        print(f"Initialized {split} split: {len(np.unique(layout[keep]))} layouts, {len(self.index)} windows.")
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx):
+        if self.file is None:
+            self.file = h5py.File(self.h5_path, "r")
+        r, i = self.index[idx]
+        T, span = self.history_size, self.history_size + self.num_preds
+        pixels = self.file["pixels"][r:r + span, i]                        # (T + num_preds, H, W, C)
+        action = self.file["action"][r:r + T, i]
+        frames = [self.transform(p) if self.transform else torch.from_numpy(p).permute(2, 0, 1).float() / 255.0
+                  for p in pixels]
+        out = {"pixels": torch.stack(frames), "action": torch.as_tensor(action, dtype=torch.long)}
+        if self.tokens is None:
+            return out
+
+        senders = [j for j in range(self.agents) if j != i]
+        rows = np.arange(r - self.max_age, r + T)                         # the memory, then the history
+        inside = rows >= self.episode_start[r]
+        rows = np.maximum(rows, self.episode_start[r])
+        sent = inside[:, None] & ~self.done[rows][:, senders]             # a sender at the goal sends no more
+        pose = _relative_pose(self.position[rows][:, senders], self.direction[rows][:, senders],
+                              self.position[rows, i][:, None], self.direction[rows, i][:, None])
+        out.update(msg_tokens=torch.as_tensor(np.asarray(self.tokens[rows][:, senders]), dtype=torch.long),
+                   msg_sent=torch.as_tensor(sent), msg_pose=torch.as_tensor(pose, dtype=torch.long))
+        return out
+
+    def close(self):
+        if self.file is not None:
+            self.file.close()
+            self.file = None
 
 # %% ../../nbs/01a_data.datasets.ipynb #3055a55b
 class MultiAgentPlanningDataset(Dataset):

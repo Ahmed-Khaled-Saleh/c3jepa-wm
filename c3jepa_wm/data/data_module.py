@@ -20,7 +20,7 @@ import torch.nn.functional as F
 
 import h5py
 
-from .datasets import FindGoalPOVDataset, MultiAgentPOVDataset, MultiAgentWorldModelDataset, MultiAgentPlanningDataset
+from .datasets import FindGoalPOVDataset, FindGoalWorldModelDataset, MultiAgentPOVDataset, MultiAgentWorldModelDataset, MultiAgentPlanningDataset
 from .transforms import get_transforms
 
 # %% ../../nbs/01c_data.data_module.ipynb #388d34c6
@@ -149,11 +149,17 @@ class WMDataModule(DataModule):
                  batch_size: int = 64, 
                  img_size: int = 224,
                  history_size: int = 3,
+                 data_dir: str | None = None, # The dataset's directory (None: the host's, `get_data_path`)
+                 val_layouts=(200, 260), # collect_world.py's datasets: the validation layouts [start, stop)
+                 num_preds: int = 1, # collect_world.py's datasets: frames predicted after the history
+                 max_age: int = 8, # collect_world.py's datasets: messages kept this many steps (the predictor's max_age)
+                 tokens=None, # collect_world.py's datasets: each frame's VQ tokens (the trainer's `encode_tokens`); None: no messages
                  **kwargs):
         
-        data_dir = self.get_data_path()
+        data_dir = data_dir or self.get_data_path()
         self.img_size = img_size
         self.history_size = history_size
+        self.val_layouts, self.num_preds, self.max_age, self.tokens = tuple(val_layouts), num_preds, max_age, tokens
         super().__init__(data_dir= data_dir, batch_size= batch_size, **kwargs)
         
 
@@ -161,9 +167,19 @@ class WMDataModule(DataModule):
 
         self.train_sender_transform, self.val_sender_transform = get_transforms(img_size= self.img_size)
         self.train_receiver_transform, self.val_receiver_transform = get_transforms(img_size= self.img_size, model= "JEPA")
-        
+        h5_path = os.path.join(self.data_dir, "dataset.h5")
+        with h5py.File(h5_path, "r") as f:
+            flat = "pixels" in f                                    # collect_world.py's format; else the old rollouts
+
+        if flat:
+            common = dict(val_layouts=self.val_layouts, history_size=self.history_size, num_preds=self.num_preds,
+                          tokens=self.tokens, max_age=self.max_age)
+            self.train_dataset = FindGoalWorldModelDataset(h5_path, "train", transform=self.train_receiver_transform, **common)
+            self.val_dataset = FindGoalWorldModelDataset(h5_path, "val", transform=self.val_receiver_transform, **common)
+            return
+
         self.train_dataset  = MultiAgentWorldModelDataset(
-            h5_path= os.path.join(self.data_dir, "dataset.h5"), 
+            h5_path= h5_path, 
             split= "train", 
             history_size= self.history_size,
             receiver_transform= self.train_receiver_transform,
@@ -171,13 +187,12 @@ class WMDataModule(DataModule):
         )
 
         self.val_dataset  = MultiAgentWorldModelDataset(
-            h5_path= os.path.join(self.data_dir, "dataset.h5"), 
+            h5_path= h5_path, 
             split= "val",
             history_size= self.history_size,
             receiver_transform= self.val_receiver_transform,
             sender_transform= self.val_sender_transform
         )
-        
 
 # %% ../../nbs/01c_data.data_module.ipynb #7bdcd73f
 def planning_collate_fn(batch):

@@ -22,6 +22,8 @@ predictor:
   emb_dropout: 0.0
   msg_embedding_dim: ${pipeline.msg_embedding_dim}
   num_embeddings: ${pipeline.num_embeddings}
+  max_offset: 14               # relative poses up to 14 cells away (the 15 x 15 grid)
+  max_age: 8                   # a message is kept 8 steps after it was sent
 
 action_encoder:
   _target_: c3jepa_wm.models.jepa.DiscreteActionEncoder

@@ -35,6 +35,8 @@ trainer:
   num_preds: 1
   lambda_sigreg: 0.1
   early_stop_patience: 10
+  erasure: {all: 0.25, none: 0.25}   # P(all of a sample's messages arrive), P(none); else each with a rate drawn uniformly
+  freeze_encoder: true           # the blind model's encoder and projector kept: both models plan in the same embeddings
 
 optimizer:
   _target_: torch.optim.AdamW
