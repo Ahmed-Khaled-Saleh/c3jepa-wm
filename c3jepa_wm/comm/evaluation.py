@@ -241,7 +241,7 @@ def operating_points(cal: tuple, test: tuple, g_min: float, targets=(0.9, 0.95, 
                            tau_db=chosen['tau_db'], met_on_calibration=chosen['met'])
     return out
 
-def frontier(estimate: np.ndarray, gain: np.ndarray, g_min: float, taus_db=(0.0, math.inf)) -> tuple:
+def frontier(estimate: np.ndarray, gain: np.ndarray, g_min: float, taus_db=TAUS_DB) -> tuple:
     "(power, reliability): the most reliable outcome for each power over margins and thresholds tried on these transmissions (an upper bound)."
     points = np.concatenate([np.c_[o['power'], o['reliability']] for o in (outcome(estimate, gain, g_min, t) for t in taus_db)])
     points = points[np.argsort(points[:, 0])]
@@ -818,7 +818,7 @@ def evaluate_power_control(
     results = {name: dict(prediction=prediction_errors(t, test_gain),
                           targets=_operating(name, (c, data['calibration']['gain']), (t, test_gain), budget, targets,
                                              taus_db, slack, message_bits, bits_per_token),
-                          frontier=[a.tolist() for a in frontier(t, test_gain, budget.g_min)])
+                          frontier=[a.tolist() for a in frontier(t, test_gain, budget.g_min, taus_db)])
                for name, (c, t) in estimated.items()}
     for name, (c, t) in estimated.items():                         # the reliability per test layout, at the same κ and τ
         results[name]['layouts'] = {target: layout_spread(t, test_gain, data['test']['layout'], budget.g_min, p['margin_db'],
