@@ -28,8 +28,8 @@ __all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'LEVELS', 'QUANTILE_LEVELS', '
            'transmissions', 'received', 'TableFading', 'network_methods', 'DistributionalChannelInversion',
            'save_lambda_policies', 'load_lambda_policies', 'network_metrics', 'run_network', 'analysis',
            'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'lagrangian_policy', 'choose_lambda',
-           'optimal_reference', 'cross_fitted', 'distributional_policies', 'evaluate_power_control', 'motion_summary',
-           'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
+           'lambda_frontier', 'optimal_reference', 'cross_fitted', 'distributional_policies', 'evaluate_power_control',
+           'motion_summary', 'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -725,6 +725,15 @@ def choose_lambda(options: tuple, data: dict, g_min: float, reliability: float) 
             lo = mid
     return scale * 10 ** hi
 
+def lambda_frontier(options: tuple, data: dict, g_min: float, points: int = 121) -> tuple:
+    """(power, reliability) of Proposition 1's policy on `options` (`_optimal_options`, `_distribution_options`) for λ
+    swept over 12 decades around the mean perfect-CSI power, on `data`'s transmissions: the λ-policy's frontier, as
+    `frontier` is a predictor's over κ and τ (judged on the same transmissions, an upper bound)."""
+    scale = float(np.mean(1 / data['gain'][data['gain'] >= g_min]))
+    judged = [_judged(_optimal_choice(options, scale * 10 ** e), data, g_min) for e in np.linspace(-4, 8, points)]
+    points = np.array(sorted((j['power'], j['reliability']) for j in judged))
+    return points[:, 0], np.maximum.accumulate(points[:, 1])
+
 def optimal_reference(
     cal: dict, test: dict, # `build_dataset`'s, on the large-scale channel
     g_min: float, # The weakest servable gain
@@ -844,6 +853,14 @@ def evaluate_power_control(
         out['optimal'] = optimal_reference(data['calibration'], data['test'], budget.g_min, targets, slack)
     if compare and fitted is not None and fitted.get('distributional'):
         out['distributional'] = distributional_policies(fitted, data['calibration'], data['test'], budget.g_min, targets, slack)
+    frontiers = {}                                                  # the λ-policies' frontiers (λ swept on the test transmissions)
+    if 'optimal' in out:
+        frontiers[OPTIMAL] = lambda_frontier(_optimal_options(data['test'], budget.g_min), data['test'], budget.g_min)
+    for name in out.get('distributional', {}):                      # each distribution as calibrated on all the calibration layouts
+        frontiers[name] = lambda_frontier(_distribution_options(fitted['distributional'][name], data['test'], budget.g_min),
+                                          data['test'], budget.g_min)
+    if frontiers:
+        out['frontiers'] = {name: [a.tolist() for a in f] for name, f in frontiers.items()}
     if len(snr_targets_db):
         out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token)
     return out
@@ -917,7 +934,8 @@ def guarantee_summary(results: dict) -> str:
     return '\n'.join(lines)
 
 def plot_frontiers(results: dict, path=None, ax=None):
-    "The frontiers (best reliability for each power) and the calibrated operating points, per predictor."
+    """The frontiers (best reliability for each power) and the calibrated operating points, per predictor (κ and τ)
+    and per λ-policy (`results['frontiers']`: λ swept)."""
     import matplotlib.pyplot as plt
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -928,10 +946,15 @@ def plot_frontiers(results: dict, path=None, ax=None):
         line, = ax.plot(power, 100 * np.asarray(reliability), lw=2.2 if name == LEARNED else 1.3, label=name)
         for o in r['targets'].values():
             ax.plot(o['power'], 100 * o['reliability'], 'o', color=line.get_color(), ms=5)
+    policies = {**({OPTIMAL: results['optimal']} if 'optimal' in results else {}), **results.get('distributional', {})}
+    for name, (power, reliability) in results.get('frontiers', {}).items():   # the λ-policies: λ swept (dashed), λ as chosen (squares)
+        line, = ax.plot(power, 100 * np.asarray(reliability), '--', lw=1.8, label=f'{name} (λ)')
+        for o in policies.get(name, {}).values():
+            ax.plot(o['power'], 100 * o['reliability'], 's', color=line.get_color(), ms=5)
     ax.plot(1, 100, 'k*', ms=12, label='perfect CSI')
     ax.set(xscale='log', xlim=(0.5, 50), ylim=(80, 100.5), xlabel='mean power, × perfect CSI',
            ylabel='servable transmissions reaching Γ (%)',
-           title='Test layouts: frontiers (lines) and calibrated operating points (dots)')
+           title='Test layouts: frontiers (lines; dashed: λ swept) and calibrated operating points')
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8)
     if path is not None:
