@@ -56,8 +56,8 @@ rollouts:                      # the movement in the data should be the movement
 link:
   snr_target_db: 10.0          # Γ
   noise_dbm: -94.0             # σ²
-  max_power_dbm: -10.0         # ρ_max: g_min = Γσ²/ρ_max = -74 dB, about 20% of the 1 m, thin-wall scene's links unservable
-                               # (20 dBm with the 2 m traces of cell-thick walls)
+  max_power_dbm: -10.0         # ρ_max: g_min = Γσ²/ρ_max = -74 dB, 12% of the 1 m, thin-wall scene's test transmissions unservable
+                               # (20 dBm with the 2 m traces of cell-thick walls: 20% unservable)
   history: 4                   # past gains the transmitter knows (L)
   history_data: null           # build the data with this many past gains (≥ history), the predictors using the `history` most
                                # recent: runs with different histories are judged on the same transmissions (a link's first
