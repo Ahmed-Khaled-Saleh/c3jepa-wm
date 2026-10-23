@@ -35,6 +35,7 @@ trainer:
   num_preds: 1
   lambda_sigreg: 0.1
   early_stop_patience: 10
+  select: val_pred_loss          # what the learning rate, early stopping and the best checkpoints follow (val_jepa_loss adds 0.1 SIGReg, which grows with the batch size)
   erasure: {all: 0.25, none: 0.25}   # P(all of a sample's messages arrive), P(none); else each with a rate drawn uniformly
   freeze_encoder: true           # the blind model's encoder and projector kept: both models plan in the same embeddings
 

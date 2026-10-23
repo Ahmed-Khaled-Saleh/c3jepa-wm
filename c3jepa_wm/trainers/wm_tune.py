@@ -33,13 +33,14 @@ from ..data.transforms import get_transforms
 
 # %% ../../nbs/05c_trainers.wm_tune.ipynb #7e9132d4
 class TrainerScheduler:
-    def __init__(self, wm_optimizer):
+    def __init__(self, wm_optimizer, select: str = "val_jepa_loss"):
+        self.select = select
         self.wm_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             wm_optimizer, mode='min', factor=0.5, patience=5
         )
 
     def step(self, val_loss):
-        self.wm_scheduler.step(val_loss['val_jepa_loss'])
+        self.wm_scheduler.step(val_loss[self.select])
         
     
 
@@ -131,6 +132,7 @@ def encode_tokens(h5_path, vqvae, out_dir=None, device="cpu", batch_size: int = 
 class WMFinetuner(BaseTrainer):
     def __init__(self, data_module, model, device, slurm_jobid, wm_lr,
                  history_size, num_preds, lambda_sigreg, early_stop_patience=15,
+                 select: str = "val_pred_loss", # The validation metric the learning rate, early stopping and the best checkpoints follow
                  erasure=None, # P(all of a sample's messages arrive), P(none arrive); otherwise each with a probability drawn uniformly
                  tokens_dir=None, # Where the dataset's tokens are written (None: next to the dataset)
                  freeze_encoder: bool = True, # Keep the pretrained encoder and projector (the blind model's embeddings) as they are
@@ -152,6 +154,7 @@ class WMFinetuner(BaseTrainer):
         self.num_preds = num_preds
         self.lambda_sigreg = lambda_sigreg
         self.early_stop_patience = early_stop_patience
+        self.select = select
         self.erasure = {"all": 0.25, "none": 0.25, **(erasure or {})}
         self.frozen = [self.model.encoder, self.model.projector] if freeze_encoder else []
         for module in self.frozen:
@@ -161,7 +164,7 @@ class WMFinetuner(BaseTrainer):
 
         self.wm_optimizer = torch.optim.AdamW([p for p in self.model.parameters() if p.requires_grad],
                                               lr=self.wm_lr, weight_decay=1e-3)
-        self.scheduler = TrainerScheduler(self.wm_optimizer)
+        self.scheduler = TrainerScheduler(self.wm_optimizer, select)
 
         self.save_dir = Path(hydra.utils.to_absolute_path(self.save_dir))
         self.save_dir.mkdir(exist_ok=True, parents=True)
@@ -184,7 +187,7 @@ def fit(self: WMFinetuner, cfg: DictConfig):
         self.scheduler.step(metrics)
         self.checkpoint(epoch, metrics)
 
-        val_loss = metrics["val_jepa_loss"]
+        val_loss = metrics[self.select]
         if val_loss < self.best_val_loss - 1e-4:   # small min-delta to avoid noise-triggered resets
             self.best_val_loss = val_loss
             self.epochs_since_improvement = 0
@@ -305,6 +308,7 @@ def evaluate_batch(self: WMFinetuner, batch):
     return {
         "val_jepa_loss": output['jepa_loss'].item(),
         "val_pred_loss": output['pred_loss'].item(),
+        "val_sigreg_loss": output['sigreg_loss'].item(),
         "val_pred_loss_no_messages": (alone - tgt_emb).pow(2).mean().item(),
     }
 
@@ -316,10 +320,11 @@ def checkpoint(self: WMFinetuner, epoch, val_loss):
         "epoch": epoch,
         "wm_optimizer_state_dict": self.wm_optimizer.state_dict(),
         "wm_model_state_dict": self.model.state_dict(),
-        "val_jepa_loss": val_loss['val_jepa_loss']
+        "val_jepa_loss": val_loss['val_jepa_loss'],
+        self.select: val_loss[self.select],
         }
     
-    acc = -val_loss["val_jepa_loss"]
+    acc = -val_loss[self.select]
     
     self.ck_pointer.save_checkpoint(state= checkpoint_state, current_acc= acc, step= epoch)
     

@@ -27,6 +27,7 @@ trainer:
   num_preds: 1
   lambda_sigreg: 0.1
   early_stop_patience: 10
+  select: val_pred_loss          # what the learning rate, early stopping and the best checkpoints follow (val_jepa_loss adds 0.1 SIGReg, which grows with the batch size)
 
 optimizer:
   _target_: torch.optim.AdamW

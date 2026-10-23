@@ -32,7 +32,8 @@ class DataModule:
                  num_workers: int = 0, 
                  pin_memory: bool = False,
                  drop_last: bool = False,
-                 persistent_workers: bool = False):
+                 persistent_workers: bool = False,
+                 val_shuffle_seed: int | None = None): # The validation set read in one fixed shuffled order (the same every epoch); None: in its order
         
         self.data_dir = data_dir
         self.batch_size = batch_size
@@ -41,6 +42,7 @@ class DataModule:
         self.pin_memory = pin_memory
         self.drop_last = drop_last
         self.persistent_workers = persistent_workers
+        self.val_shuffle_seed = val_shuffle_seed
 
     def setup(self):
         """Load datasets and apply transforms."""
@@ -84,7 +86,7 @@ class DataModule:
             shuffle=False, 
             num_workers=self.num_workers, 
             pin_memory=self.pin_memory,
-            sampler=self.sampler(self.val_dataset),
+            sampler=self.val_sampler(self.val_dataset),
             collate_fn=self.collator(),
             drop_last=self.drop_last,
             persistent_workers=self.persistent_workers
@@ -99,6 +101,15 @@ class DataModule:
         dist_sampler = torch.utils.data.distributed.DistributedSampler(dataset) if torch.distributed.is_initialized() else None
         return dist_sampler
     
+
+    def val_sampler(self, dataset):
+        """The validation sampler: `sampler`'s, else a fixed permutation of `val_shuffle_seed`. A batch then mixes
+        episodes and layouts rather than holding consecutive windows of one episode, which matters for batch statistics
+        such as SIGReg's, and every epoch sees the same batches."""
+        sampler = self.sampler(dataset)
+        if sampler is not None or self.val_shuffle_seed is None:
+            return sampler
+        return torch.randperm(len(dataset), generator=torch.Generator().manual_seed(self.val_shuffle_seed)).tolist()
 
     def collator(self):
         """Custom collate function to handle variable-length sequences (optional)."""
