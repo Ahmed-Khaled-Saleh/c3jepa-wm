@@ -25,11 +25,12 @@ __all__ = ['LEARNED', 'REFERENCES', 'DECOMPOSED', 'LEVELS', 'QUANTILE_LEVELS', '
            'OUTAGES', 'past_gains', 'rician_quantile', 'rician_tail', 'DecomposedPredictor', 'fit_decomposed',
            'MeanSpread', 'QuantileSet', 'fit_distributional', 'fit_baselines', 'baselines', 'prediction_errors',
            'operating_points', 'frontier', 'layout_intervals', 'layout_spread', 'layout_summary', 'plot_layout_spread',
-           'transmissions', 'received', 'TableFading', 'network_methods', 'DistributionalChannelInversion',
-           'save_lambda_policies', 'load_lambda_policies', 'network_metrics', 'run_network', 'analysis',
-           'compare_network', 'network_summary', 'estimates', 'snr_sweep', 'lagrangian_policy', 'choose_lambda',
-           'lambda_frontier', 'optimal_reference', 'cross_fitted', 'distributional_policies', 'evaluate_power_control',
-           'motion_summary', 'summary', 'guarantee_summary', 'plot_frontiers', 'snr_summary', 'plot_snr']
+           'transmissions', 'received', 'received_at', 'TableFading', 'network_methods',
+           'DistributionalChannelInversion', 'save_lambda_policies', 'load_lambda_policies', 'network_metrics',
+           'run_network', 'analysis', 'compare_network', 'network_summary', 'estimates', 'snr_sweep',
+           'lagrangian_policy', 'choose_lambda', 'lambda_frontier', 'optimal_reference', 'cross_fitted',
+           'distributional_policies', 'evaluate_power_control', 'motion_summary', 'summary', 'guarantee_summary',
+           'plot_frontiers', 'snr_summary', 'plot_snr']
 
 # %% ../../nbs/09c_comm.evaluation.ipynb #a0b77181
 LEARNED = 'geometry + history quantile (learned)'                   # the saved power control's predictor
@@ -353,6 +354,11 @@ def received(estimate, gain, g_min: float, margin_db: float, tau_db: float, snr_
     """Uncoded BPSK at the SNR each transmission gets (a bit is wrong with probability Q(√(2 SNR))): the share of the
     servable messages arriving without an error, and the share of wrong tokens in the servable messages sent."""
     power, sent = transmissions(estimate, g_min, margin_db, tau_db)
+    return received_at(np.where(sent, power, 0.0), gain, g_min, snr_target_db, message_bits, bits_per_token)
+
+def received_at(power, gain, g_min: float, snr_target_db: float, message_bits: int = 392, bits_per_token: int = 8) -> dict:
+    "As `received`, for given powers in units of Γσ² (0: withheld), e.g. a λ-policy's."
+    sent = power > 0
     snr = 10 ** (snr_target_db / 10) * power * gain
     ber = 0.5 * np.vectorize(math.erfc)(np.sqrt(snr))
     servable = gain >= g_min
@@ -646,17 +652,26 @@ def snr_sweep(
     slack: float = 0.0, # Calibrate for target + slack
     message_bits: int = 392, # Per message
     bits_per_token: int = 8, # Per token
+    fitted: dict | None = None, # `fit_baselines`' result: also its distributional predictors' λ-policies
+    optimal: bool = False, # Also the optimal policy (oracle; on the large-scale channel)
 ) -> dict:
-    """Γ -> the weakest servable gain (dB), the share of servable test transmissions, and per predictor and target the
-    operating point on the test layouts (as `evaluate_power_control`'s), with κ and τ chosen again for that Γ."""
-    cal_gain, test_gain = data['calibration']['gain'], data['test']['gain']
+    """Γ -> the weakest servable gain (dB), the share of servable test transmissions, per predictor and target the
+    operating point on the test layouts (as `evaluate_power_control`'s), with κ and τ chosen again for that Γ, and per
+    λ-policy (`policies`: the optimal policy, the distributional predictors') the same with λ chosen again."""
+    cal, test = data['calibration'], data['test']
     out = {}
     for snr in snr_targets_db:
         b = replace(budget, snr_target_db=float(snr))
+        policy = dict(snr_target_db=float(snr), message_bits=message_bits, bits_per_token=bits_per_token, per_layout=False)
+        policies = {OPTIMAL: optimal_reference(cal, test, b.g_min, targets, slack, **policy)} \
+            if optimal and 'large_scale' in test else {}
+        if fitted is not None and fitted.get('distributional'):
+            policies.update(distributional_policies(fitted, cal, test, b.g_min, targets, slack, **policy))
         out[float(snr)] = dict(
-            g_min_db=float(db(b.g_min)), servable=float((test_gain >= b.g_min).mean()),
-            predictors={name: _operating(name, (c, cal_gain), (t, test_gain), b, targets, taus_db, slack, message_bits,
-                                         bits_per_token) for name, (c, t) in estimated.items()})
+            g_min_db=float(db(b.g_min)), servable=float((test['gain'] >= b.g_min).mean()),
+            predictors={name: _operating(name, (c, cal['gain']), (t, test['gain']), b, targets, taus_db, slack, message_bits,
+                                         bits_per_token) for name, (c, t) in estimated.items()},
+            policies=policies)
     return out
 
 OPTIMAL = 'optimal policy (oracle)'
@@ -695,6 +710,9 @@ def lagrangian_policy(
     g_min: float, # The weakest servable gain
     targets=(0.9, 0.95, 0.99), # Reliability targets
     slack: float = 0.0, # λ chosen for target + slack
+    snr_target_db: float | None = None, # Γ: also the servable messages arriving error-free (`received_at`)
+    message_bits: int = 392, bits_per_token: int = 8,
+    per_layout: bool = True, # Also the reliability per layout
 ) -> dict:
     """Proposition 1's policy on the options: per transmission the power minimizing power - λ P(success), or none, λ the
     smallest whose reliability on the calibration transmissions reaches `target` + `slack` (`choose_lambda`). Per target:
@@ -707,8 +725,11 @@ def lagrangian_policy(
     for target in targets:
         lam = choose_lambda(cal_options, cal, g_min, target + slack)
         power = _optimal_choice(test_options, lam)
-        layouts = judge(power, power > 0, test['gain'], test['layout'], g_min, target, episode=test.get('episode'))
+        layouts = judge(power, power > 0, test['gain'], test['layout'], g_min, target, episode=test.get('episode')) \
+            if per_layout else {}
         out[target] = dict(lam=lam, **_judged(power, test, g_min),
+                           **(received_at(power, test['gain'], g_min, snr_target_db, message_bits, bits_per_token)
+                              if snr_target_db is not None else {}),
                            **{k: v for k, v in layouts.items() if k.startswith('layout_')},
                            motion={part: dict(share=float(m.mean()), **_judged(power, test, g_min, m)) for part, m in parts if m.any()})
     return out
@@ -740,11 +761,12 @@ def optimal_reference(
     targets=(0.9, 0.95, 0.99), # Reliability targets
     slack: float = 0.0, # λ chosen for target + slack
     outages=OUTAGES, # The outages each transmission chooses from (and ρ_max)
+    **policy, # `lagrangian_policy`'s options
 ) -> dict:
     """The cheapest policy for the reliability on average (Proposition 1's), knowing what `REFERENCES[1]` knows:
     `lagrangian_policy` on the true distribution of each gain given the steps before."""
     return lagrangian_policy(_optimal_options(cal, g_min, outages), _optimal_options(test, g_min, outages), cal, test,
-                             g_min, targets, slack)
+                             g_min, targets, slack, **policy)
 
 def _distribution_options(dist, data: dict, g_min: float) -> tuple:
     """Each transmission's options from a predicted distribution (`MeanSpread`, `QuantileSet`): the power reaching each of
@@ -780,6 +802,7 @@ def distributional_policies(
     fitted: dict, # `fit_baselines`' result, with `distributional`
     cal: dict, test: dict, # `build_dataset`'s
     g_min: float, targets=(0.9, 0.95, 0.99), slack: float = 0.0,
+    **policy, # `lagrangian_policy`'s options
 ) -> dict:
     """name -> `lagrangian_policy` on each distributional predictor's distributions: λ chosen on the calibration
     transmissions cross-fitted (`cross_fitted`), the test transmissions' with the distribution calibrated on all of them."""
@@ -787,7 +810,7 @@ def distributional_policies(
     for name, dist in fitted.get('distributional', {}).items():
         cal_options, cal_order = cross_fitted(dist, cal, g_min)
         out[name] = lagrangian_policy(cal_options, _distribution_options(dist, test, g_min), cal_order, test, g_min,
-                                      targets, slack)
+                                      targets, slack, **policy)
     return out
 
 def evaluate_power_control(
@@ -850,9 +873,13 @@ def evaluate_power_control(
     out = dict(servable=float((test_gain >= budget.g_min).mean()), transmissions=len(test_gain), predictors=results,
                layout_coverage=layout_coverage, layout_confidence=layout_confidence)
     if compare and 'large_scale' in data['test']:
-        out['optimal'] = optimal_reference(data['calibration'], data['test'], budget.g_min, targets, slack)
+        out['optimal'] = optimal_reference(data['calibration'], data['test'], budget.g_min, targets, slack,
+                                           snr_target_db=budget.snr_target_db, message_bits=message_bits,
+                                           bits_per_token=bits_per_token)
     if compare and fitted is not None and fitted.get('distributional'):
-        out['distributional'] = distributional_policies(fitted, data['calibration'], data['test'], budget.g_min, targets, slack)
+        out['distributional'] = distributional_policies(fitted, data['calibration'], data['test'], budget.g_min, targets, slack,
+                                                        snr_target_db=budget.snr_target_db, message_bits=message_bits,
+                                                        bits_per_token=bits_per_token)
     frontiers = {}                                                  # the λ-policies' frontiers (λ swept on the test transmissions)
     if 'optimal' in out:
         frontiers[OPTIMAL] = lambda_frontier(_optimal_options(data['test'], budget.g_min), data['test'], budget.g_min)
@@ -862,7 +889,8 @@ def evaluate_power_control(
     if frontiers:
         out['frontiers'] = {name: [a.tolist() for a in f] for name, f in frontiers.items()}
     if len(snr_targets_db):
-        out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token)
+        out['snr'] = snr_sweep(estimated, data, budget, snr_targets_db, targets, taus_db, slack, message_bits, bits_per_token,
+                               fitted if compare else None, optimal=compare)
     return out
 
 def motion_summary(results: dict, target: float) -> str:
@@ -965,25 +993,27 @@ def snr_summary(sweep: dict) -> str:
     "A text table of `snr_sweep`'s result: per Γ and predictor, per target, the reliability, power and error-free share on the test layouts."
     first = next(iter(sweep.values()))
     targets = list(next(iter(first['predictors'].values())))
-    w = max(len(n) for r in sweep.values() for n in r['predictors']) + 2
+    w = max(len(n) for r in sweep.values() for n in {**r['predictors'], **r.get('policies', {})}) + 2
     head = f"{'Γ (dB)':>7s}{'g_min':>8s}{'servable':>10s}  {'':{w}s}" + ''.join(f'{f"{100 * t:g}%: reached / power / error-free":>36s}' for t in targets)
     lines = [head]
     for snr, r in sweep.items():
-        for i, (name, points) in enumerate(r['predictors'].items()):
+        for i, (name, points) in enumerate({**r['predictors'], **{f'{n} (λ)': p for n, p in r.get('policies', {}).items()}}.items()):
             row = (f"{snr:7g}{r['g_min_db']:7.0f} {100 * r['servable']:8.1f}%  " if i == 0 else ' ' * 27) + f"{name:{w}s}"
             for t in targets:
                 o = points[t]
-                flag = ' ' if o['met_on_calibration'] else '✗'
+                flag = ' ' if o.get('met_on_calibration', True) else '✗'
                 row += f"{100 * o['reliability']:13.1f}% {o['power']:6.1f}× {100 * o['error_free']:6.1f}%{flag}  "
             lines.append(row)
     lines.append('g_min: the weakest servable gain (dB). ✗: no margin and threshold reach the target on the calibration layouts')
     return '\n'.join(lines)
 
 def plot_snr(sweep: dict, path=None):
-    "Per target (rows): the reliability, the power and the error-free messages on the test layouts against Γ, per predictor."
+    """Per target (rows): the reliability, the power and the error-free messages on the test layouts against Γ, per predictor
+    (κ and τ chosen again for each Γ) and per λ-policy (λ chosen again; dashed, squares)."""
     import matplotlib.pyplot as plt
     snrs = list(sweep)
     names = list(sweep[snrs[0]]['predictors'])
+    policies = list(sweep[snrs[0]].get('policies', {}))
     targets = list(sweep[snrs[0]]['predictors'][names[0]])
     fig, axes = plt.subplots(len(targets), 3, figsize=(13, 3.2 * len(targets)), squeeze=False)
     for row, t in zip(axes, targets):
@@ -991,6 +1021,12 @@ def plot_snr(sweep: dict, path=None):
             points = [sweep[s]['predictors'][name][t] for s in snrs]
             style = dict(lw=2.2 if name == LEARNED else 1.3, marker='o', ms=3, label=name,
                          **(dict(color='k', ls='--') if name == 'perfect CSI' else {}))
+            row[0].plot(snrs, [100 * p['reliability'] for p in points], **style)
+            row[1].plot(snrs, [p['power'] for p in points], **style)
+            row[2].plot(snrs, [100 * p['error_free'] for p in points], **style)
+        for name in policies:
+            points = [sweep[s]['policies'][name][t] for s in snrs]
+            style = dict(lw=1.8, ls='--', marker='s', ms=3, label=f'{name} (λ)')
             row[0].plot(snrs, [100 * p['reliability'] for p in points], **style)
             row[1].plot(snrs, [p['power'] for p in points], **style)
             row[2].plot(snrs, [100 * p['error_free'] for p in points], **style)
@@ -1003,7 +1039,7 @@ def plot_snr(sweep: dict, path=None):
     for ax in axes[-1]:
         ax.set(xlabel='target SNR Γ (dB)')
     axes[0, 0].legend(fontsize=8)
-    fig.suptitle('Test layouts, κ and τ chosen again for each Γ', y=1.0)
+    fig.suptitle('Test layouts, κ and τ (and λ, dashed) chosen again for each Γ', y=1.0)
     fig.tight_layout()
     if path is not None:
         fig.savefig(path, dpi=120, bbox_inches='tight')
