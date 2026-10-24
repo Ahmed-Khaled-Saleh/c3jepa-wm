@@ -29,6 +29,7 @@ methods: ['no communication', 'perfect channel', 'perfect CSI', 'learned', 'lamb
                                  # no communication: nothing arrives (the model's 'nothing received'); perfect channel: everything
                                  # arrives; perfect CSI / learned / lambda-policy: the link with that power control (learned:
                                  # power_control's predictor, κ and τ; lambda-policy: Proposition 1's policy, link.lambda_policy)
+                                 # also 'random': uniform actions, no messages (the floor; not in the default list)
 
 record:                          # one method's episodes kept as comm_power's trajectories (trajectories_<layout>.npz: every
                                  # agent's cell and heading at every step), for κ, τ and λ chosen on the planner's own movement

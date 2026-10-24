@@ -374,6 +374,9 @@ def _merged(parts: list) -> dict:
     "`World.evaluate`'s results of consecutive rounds as one."
     out = {k: np.concatenate([p[k] for p in parts]) for k in ('episode_successes', 'episode_returns', 'episode_lengths', 'seeds')}
     out['success_rate'] = float(out['episode_successes'].mean()) * 100.0
+    reached = out['episode_returns'] > 0                        # (episodes, agents): FindGoal rewards an agent only on its reaching the goal
+    out['agent_success_rate'] = float(reached.mean()) * 100.0   # of the agents, over the episodes
+    out['any_success_rate'] = float(reached.any(axis=1).mean()) * 100.0
     out['mean_return'] = float(out['episode_returns'].sum(axis=1).mean())
     out['mean_length'] = float(out['episode_lengths'].mean())
     return out
@@ -386,7 +389,8 @@ def deploy(
     seed: int = 0, # The first episode's seed
     budget=None, # `comm.power_control.Budget`: the link's metrics (`comm.evaluation.network_metrics`), for the methods with a link
 ) -> dict:
-    """Per method: the episodes' success rate, return and length (`World.evaluate`) and, for the methods sending over a
+    """Per method: the episodes' success rate (every agent at the goal), the agents' (each agent's own) and the share
+    with any agent at the goal, return and length (`World.evaluate`) and, for the methods sending over a
     link, its metrics: reached, power (× perfect CSI's), withheld, intact (every token right), wrong tokens, garbled.
     With a `TrajectoryRecorder` in the world's envs, also the episodes' movement (`trajectories`, one per seed played).
     The episodes are played in rounds of the world's `num_envs`, all starting together (`reset_mode='wait'`): the envs
@@ -403,8 +407,10 @@ def deploy(
             parts.append(world.evaluate(episodes=min(n, episodes - start), seed=seed + start, reset_mode='wait'))
             done, elapsed = start + len(parts[-1]['seeds']), time.time() - began
             success = np.concatenate([p['episode_successes'] for p in parts]).mean()
+            agents = (np.concatenate([p['episode_returns'] for p in parts]) > 0).mean()
             length = np.concatenate([p['episode_lengths'] for p in parts]).mean()
-            logger.info(f"{method}: {done}/{episodes} episodes, success {100 * success:.1f}%, mean length {length:.0f}; "
+            logger.info(f"{method}: {done}/{episodes} episodes, success {100 * success:.1f}% (agents {100 * agents:.1f}%), "
+                        f"mean length {length:.0f}; "
                         f"{elapsed / len(parts):.0f} s a round, {elapsed / 60:.1f} min so far, "
                         f"~{elapsed / done * (episodes - done) / 60:.0f} min left")
         result = _merged(parts)

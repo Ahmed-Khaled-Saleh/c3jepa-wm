@@ -27,7 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 
 import stable_marl as sm
 from stable_marl.planning.solver import CategoricalCEMSolver
-from stable_marl.policy import PlanConfig, WorldModelPolicy
+from stable_marl.policy import PlanConfig, RandomPolicy, WorldModelPolicy
 
 from c3jepa_wm.comm.channel_data import PairCache, fading_correlation
 from c3jepa_wm.comm.evaluation import load_lambda_policies
@@ -87,8 +87,8 @@ def main(cfg: DictConfig):
     tokens = vq_tokens(vqvae, device)
 
     def make_world(method):
-        silent = method == 'no communication'
-        link = None if method in ('no communication', 'perfect channel') else \
+        silent = method in ('no communication', 'random')
+        link = None if method in ('no communication', 'random', 'perfect channel') else \
             c3wm_link(method, cache_for, saved, crc=cfg.link.crc, rho=rho(cfg), rician=cfg.link.rician, policies=policies,
                       policy=cfg.link.lambda_policy.name, target=cfg.link.lambda_policy.target)
         record = [TrajectoryRecorder] if cfg.record.dir and method == cfg.record.method else []
@@ -100,6 +100,8 @@ def main(cfg: DictConfig):
                                       lambda e: ActionSubset(e, cfg.actions)])
 
     def make_policy(method):
+        if method == 'random':                                      # uniform actions: the floor the planner should beat
+            return RandomPolicy(seed=cfg.seed)
         p, cost = cfg.planner, C3WMCost(jepa, cfg.pipeline.history_size)
         if p.solver == 'stable_marl':
             solver = CategoricalCEMSolver(cost, batch_size=None, num_samples=p.num_samples, n_steps=p.n_steps, topk=p.topk,
@@ -127,9 +129,11 @@ def main(cfg: DictConfig):
     rows = []
     for method, r in results.items():
         link = r['link'] or {}
-        rows.append(dict(method=method, success_rate=r['success_rate'], mean_length=r['mean_length'],
+        rows.append(dict(method=method, success_rate=r['success_rate'], agent_success_rate=r['agent_success_rate'],
+                         any_success_rate=r['any_success_rate'], mean_length=r['mean_length'],
                          mean_return=r['mean_return'], **{f'link_{k}': v for k, v in link.items()}))
-        logger.info(f"{method:18s} success {r['success_rate']:5.1f}%  length {r['mean_length']:6.1f}"
+        logger.info(f"{method:18s} success {r['success_rate']:5.1f}%  agents {r['agent_success_rate']:5.1f}%  "
+                    f"length {r['mean_length']:6.1f}"
                     + (f"  reached {100 * link['reached']:.1f}%  power {link['power']:.2f}×  withheld {100 * link['withheld']:.1f}%"
                        if link else ''))
     out = Path(to_absolute_path(cfg.out_dir))
