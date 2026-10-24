@@ -240,12 +240,42 @@ def jepa_transform(images: torch.Tensor) -> torch.Tensor:
 class C3WMCost(nn.Module):
     """C3-WM's world model as a planning cost with one cost per agent (a solver's `mode='per_agent'`): each agent rolls
     the candidate plans out from its own frames, actions and received messages with the shared model (`JEPA.rollout`),
-    scored by `JEPA.criterion` (the closest imagined step's distance to its goal's embedding). `messages=False`: the
-    blind model's planning (no messages read)."""
+    scored by the imagined steps' squared distances to its goal's embedding, as `cost` says: 'min' the closest step's
+    (`JEPA.criterion`'s), 'terminal' the last step's, 'mean' their mean. `messages=False`: the blind model's planning
+    (no messages read). Each call also notes how much the costs prefer one first action (`landscape`)."""
 
-    def __init__(self, model, history_size: int = 3, messages: bool = True):
+    COSTS = ('min', 'terminal', 'mean')
+
+    def __init__(self, model, history_size: int = 3, messages: bool = True, cost: str = 'min'):
         super().__init__()
-        self.model, self.history_size, self.messages = model, history_size, messages
+        if cost not in self.COSTS:
+            raise ValueError(f"cost: one of {self.COSTS}, not {cost!r}")
+        self.model, self.history_size, self.messages, self.cost = model, history_size, messages, cost
+        self.gaps, self.spreads = [], []
+
+    def _score(self, info: dict) -> torch.Tensor:
+        "Each candidate's cost (B, S) from its imagined steps' squared distances to the goal's embedding."
+        pred = info['predicted_emb'][..., info.get('observed', self.history_size):, :]    # (B, S, horizon, D)
+        d = (pred - info['goal_emb'][..., -1:, :]).pow(2).sum(-1)                         # (B, S, horizon)
+        return {'min': d.min(-1).values, 'terminal': d[..., -1], 'mean': d.mean(-1)}[self.cost]
+
+    def _note(self, costs: torch.Tensor, first: torch.Tensor, K: int):
+        """The landscape of one call (costs and first actions (B, S)): per env, the gap between the best plan's cost
+        and the best plan's starting with another action, relative to the costs' spread (median - min); 0: the
+        first action does not matter."""
+        best = torch.stack([torch.where(first == k, costs, torch.full_like(costs, float('inf'))).min(1).values
+                            for k in range(K)], -1).sort(-1).values                      # (B, K) per first action
+        spread = costs.median(1).values - costs.min(1).values
+        ok = torch.isfinite(best[:, 1])                                                  # another first action sampled
+        self.gaps += ((best[ok, 1] - best[ok, 0]) / spread[ok].clamp_min(1e-8)).tolist()
+        self.spreads += (spread / costs.median(1).values.abs().clamp_min(1e-8)).tolist()
+
+    def landscape(self) -> dict:
+        "Over the calls so far: the first-action gap's median, the share of near ties (gap < 5%), the relative spread."
+        g, s = np.array(self.gaps), np.array(self.spreads)
+        return {'first_action_gap': float(np.median(g)) if len(g) else None,
+                'first_action_ties': float((g < 0.05).mean()) if len(g) else None,
+                'cost_spread': float(np.median(s)) if len(s) else None}
 
     def criterion(self, info_dict: dict, action_candidates: torch.Tensor) -> torch.Tensor:
         return self.get_cost(info_dict, action_candidates)
@@ -278,7 +308,8 @@ class C3WMCost(nn.Module):
             goal_emb = self.model.encode({'pixels': goal[:, 0, a].unsqueeze(1)})['emb']   # (B, 1, D): the same for every candidate
             info['goal_emb'] = goal_emb.unsqueeze(1).expand(B, S, 1, -1)
             info = self.model.rollout(info, actions, history_size=self.history_size)
-            costs.append(self.model.criterion(info))
+            costs.append(self._score(info))
+            self._note(costs[-1], plan[:, :, 0, a], action_candidates.shape[-1])
         return torch.stack(costs, dim=-1)
 
 # %% ../../nbs/07e_evaluators.deploy.ipynb #e7000020
@@ -400,8 +431,8 @@ def deploy(
     from c3jepa_wm.comm.evaluation import network_metrics
     out = {}
     for method in methods:
-        world = make_world(method)
-        world.set_policy(make_policy(method))
+        world, policy = make_world(method), make_policy(method)
+        world.set_policy(policy)
         n, parts, began = world.num_envs, [], time.time()
         for start in range(0, episodes, n):
             parts.append(world.evaluate(episodes=min(n, episodes - start), seed=seed + start, reset_mode='wait'))
@@ -414,7 +445,8 @@ def deploy(
                         f"{elapsed / len(parts):.0f} s a round, {elapsed / 60:.1f} min so far, "
                         f"~{elapsed / done * (episodes - done) / 60:.0f} min left")
         result = _merged(parts)
-        rows = [r for env in world.envs.envs for r in (find_wrapper(env, C3WMCommunication).records or [])]
+        cost = getattr(getattr(policy, 'solver', None), 'cost', None)
+        result['landscape'] = cost.landscape() if hasattr(cost, 'landscape') else None   # a planner's        rows = [r for env in world.envs.envs for r in (find_wrapper(env, C3WMCommunication).records or [])]
         result['link'] = network_metrics(rows, budget, MESSAGE_TOKENS, [0.0]) if rows and budget is not None else None
         recorders = [r for env in world.envs.envs if (r := find_wrapper(env, TrajectoryRecorder)) is not None]
         if recorders:                                               # each seed played once (an idle env's reset has none)

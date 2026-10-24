@@ -73,6 +73,8 @@ planner:                         # stable-marl's WorldModelPolicy, one cost per 
   num_samples: 128               # candidate plans per agent (c3jepa's pop_size)
   n_steps: 5                     # CEM iterations (c3jepa's opt_steps)
   topk: 16
+  cost: min                      # a plan's cost from its imagined steps' squared distances to the goal's embedding: min (the
+                                 # closest step, JEPA.criterion's), terminal (the last step), mean (all steps)
 
 pipeline:                        # what the model configs interpolate (configs/train/pipeline/wm_finetune.yaml's)
   history_size: 3

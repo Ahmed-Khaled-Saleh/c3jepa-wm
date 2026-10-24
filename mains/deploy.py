@@ -102,7 +102,8 @@ def main(cfg: DictConfig):
     def make_policy(method):
         if method == 'random':                                      # uniform actions: the floor the planner should beat
             return RandomPolicy(seed=cfg.seed)
-        p, cost = cfg.planner, C3WMCost(jepa, cfg.pipeline.history_size)
+        p = cfg.planner
+        cost = C3WMCost(jepa, cfg.pipeline.history_size, cost=p.cost)
         if p.solver == 'stable_marl':
             solver = CategoricalCEMSolver(cost, batch_size=None, num_samples=p.num_samples, n_steps=p.n_steps, topk=p.topk,
                                           mode='per_agent', device=device, seed=cfg.seed)
@@ -128,12 +129,15 @@ def main(cfg: DictConfig):
 
     rows = []
     for method, r in results.items():
-        link = r['link'] or {}
+        link, land = r['link'] or {}, r.get('landscape') or {}
         rows.append(dict(method=method, success_rate=r['success_rate'], agent_success_rate=r['agent_success_rate'],
                          any_success_rate=r['any_success_rate'], mean_length=r['mean_length'],
-                         mean_return=r['mean_return'], **{f'link_{k}': v for k, v in link.items()}))
+                         mean_return=r['mean_return'], **{f'link_{k}': v for k, v in link.items()},
+                         **{f'planner_{k}': v for k, v in land.items()}))
         logger.info(f"{method:18s} success {r['success_rate']:5.1f}%  agents {r['agent_success_rate']:5.1f}%  "
                     f"length {r['mean_length']:6.1f}"
+                    + (f"  first-action gap {land['first_action_gap']:.3f} (ties {100 * land['first_action_ties']:.0f}%)"
+                       if land.get('first_action_gap') is not None else '')
                     + (f"  reached {100 * link['reached']:.1f}%  power {link['power']:.2f}×  withheld {100 * link['withheld']:.1f}%"
                        if link else ''))
     out = Path(to_absolute_path(cfg.out_dir))

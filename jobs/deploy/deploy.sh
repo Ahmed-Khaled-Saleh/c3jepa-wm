@@ -17,11 +17,14 @@
 # cells not traced yet (Sionna RT). Override anything at submission, e.g.
 #   JEPA=... VQVAE=... sbatch deploy.sh
 #   JEPA=... VQVAE=... EXTRA="methods=[learned] episodes=120 planner.num_samples=256" sbatch deploy.sh
+#   JEPA=... VQVAE=... METHODS="[random,perfect channel]" EXTRA="episodes=40 planner.cost=terminal" sbatch deploy.sh
+# METHODS is passed as one argument (method names have spaces, which EXTRA's words would split).
 
 JEPA=${JEPA:?set JEPA to the fine-tuned world model checkpoint}
 VQVAE=${VQVAE:?set VQVAE to the VQ-VAE checkpoint}
 WANDB_MODE=${WANDB_MODE:-online}
 EXTRA=${EXTRA:-}
+METHODS=${METHODS:-}
 
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-1}
 export MPLBACKEND=Agg
@@ -33,9 +36,9 @@ cd /projappl/project_2009050/c3jepa-wm/mains/
 mkdir -p logs
 
 echo "------------------------------------------------"
-echo "Job $SLURM_JOB_ID on $SLURMD_NODENAME: jepa=$JEPA vqvae=$VQVAE $EXTRA"
+echo "Job $SLURM_JOB_ID on $SLURMD_NODENAME: jepa=$JEPA vqvae=$VQVAE methods=$METHODS $EXTRA"
 nvidia-smi -L
 python -c "import drjit as dr, mitsuba as mi; assert dr.has_backend(dr.JitBackend.CUDA), 'Dr.Jit sees no CUDA device'; mi.set_variant('cuda_ad_mono_polarized'); import sionna.rt" || exit 1
 echo "------------------------------------------------"
 
-srun python deploy.py checkpoints.jepa="$JEPA" checkpoints.vqvae="$VQVAE" wandb.mode="$WANDB_MODE" $EXTRA
+srun python deploy.py checkpoints.jepa="$JEPA" checkpoints.vqvae="$VQVAE" wandb.mode="$WANDB_MODE" ${METHODS:+"methods=$METHODS"} $EXTRA
