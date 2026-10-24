@@ -35,7 +35,7 @@ record:                          # one method's episodes kept as comm_power's tr
                                  # (configs/comm's planner: then layouts [200, 260], its calibration and test layouts)
   dir: null                      # e.g. ${data_dir}/trajectories_planner (comm's planner.trajectories); null: nothing recorded
                                  # added to the files there by episode seed: split the episodes over jobs with seed=0, 120, 240, ...
-  method: perfect channel        # whose episodes: one of `methods` (perfect channel: every message arrives; the link's own
+  method: perfect channel        # whose episodes (the run plays this method only; perfect channel: every message arrives; the link's own
                                  # methods move about the same, and need the λ-policy calibrated first)
 
 checkpoints:

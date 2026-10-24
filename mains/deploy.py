@@ -12,7 +12,7 @@ the episodes' length and return and, over a link, its reliability and power.
 With `record.dir`, one method's episodes are also kept as comm_power's trajectories (every agent's cell and heading at
 every step, `trajectories_<layout>.npz`), for choosing κ, τ and λ on the planner's own movement (comm_power's `planner`):
 
-    python deploy.py methods=['perfect channel'] layouts=[200,260] episodes=600 record.dir=.../trajectories_planner ...
+    python deploy.py layouts=[200,260] episodes=600 record.dir=.../trajectories_planner ...    # record.method's episodes only
 """
 import json
 import os
@@ -68,10 +68,11 @@ def main(cfg: DictConfig):
     world_kwargs = {k: v for k, v in env_cfg.items() if k not in ('_target_', 'variations')}
     world_kwargs['max_steps'] = cfg.max_steps
     layouts = list(range(*cfg.layouts))
-    over_link = {'learned', 'perfect CSI', 'lambda-policy'} & set(cfg.methods)
+    methods = [cfg.record.method] if cfg.record.dir else list(cfg.methods)   # a recording plays its method only
+    over_link = {'learned', 'perfect CSI', 'lambda-policy'} & set(methods)
     saved = load_power_control(to_absolute_path(cfg.checkpoints.power_control)) if over_link else None
     policies = None
-    if 'lambda-policy' in cfg.methods:                              # comm_power's, next to its power_control.pkl by default
+    if 'lambda-policy' in methods:                              # comm_power's, next to its power_control.pkl by default
         path = cfg.checkpoints.lambda_policy or Path(to_absolute_path(cfg.checkpoints.power_control)).parent / 'lambda_policy.pkl'
         policies = load_lambda_policies(to_absolute_path(str(path)))
     trace = OmegaConf.to_container(cfg.tracing, resolve=True)
@@ -112,9 +113,7 @@ def main(cfg: DictConfig):
                                                    history_len=cfg.pipeline.history_size),
                                 transform={'pixels': jepa_transform, 'goal': jepa_transform}, history_keys=HISTORY_KEYS)
 
-    if cfg.record.dir and cfg.record.method not in cfg.methods:
-        raise ValueError(f"record.method ({cfg.record.method!r}) must be one of methods {list(cfg.methods)}")
-    results = deploy(make_world, make_policy, list(cfg.methods), cfg.episodes, cfg.seed,
+    results = deploy(make_world, make_policy, methods, cfg.episodes, cfg.seed,
                      saved['budget'] if saved is not None else None)
     for method, r in results.items():                               # the recorded movement, as comm_power's trajectories
         if 'trajectories' in r:
