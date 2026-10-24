@@ -446,7 +446,8 @@ def deploy(
                         f"~{elapsed / done * (episodes - done) / 60:.0f} min left")
         result = _merged(parts)
         cost = getattr(getattr(policy, 'solver', None), 'cost', None)
-        result['landscape'] = cost.landscape() if hasattr(cost, 'landscape') else None   # a planner's        rows = [r for env in world.envs.envs for r in (find_wrapper(env, C3WMCommunication).records or [])]
+        result['landscape'] = cost.landscape() if hasattr(cost, 'landscape') else None   # a planner's
+        rows = [r for env in world.envs.envs for r in (find_wrapper(env, C3WMCommunication).records or [])]
         result['link'] = network_metrics(rows, budget, MESSAGE_TOKENS, [0.0]) if rows and budget is not None else None
         recorders = [r for env in world.envs.envs if (r := find_wrapper(env, TrajectoryRecorder)) is not None]
         if recorders:                                               # each seed played once (an idle env's reset has none)
