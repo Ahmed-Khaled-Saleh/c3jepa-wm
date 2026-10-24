@@ -148,12 +148,13 @@ def _history_data(cfg) -> int:
     return built
 
 
-def _per_layout(cfg, data, layouts, seed, trajectories: str = 'trajectories') -> dict:
+def _per_layout(cfg, source: tuple, layouts, seed) -> dict:
     """Each layout's samples (`build_dataset` one layout at a time: the same as all at once, with the fading seeded per
     layout), built with `_history_data` past gains and kept to the `link.history` most recent; with the past steps if
-    a predictor reads them; from the trajectories in `data / trajectories`."""
+    a predictor reads them; `source`: the layouts' channels and their trajectories (directories)."""
     link = cfg.link
-    return {k: with_history(build_dataset(data / 'layouts', data / trajectories, [k], history=_history_data(cfg),
+    layout_dir, trajectory_dir = source
+    return {k: with_history(build_dataset(layout_dir, trajectory_dir, [k], history=_history_data(cfg),
                                           fading=link.fading, fading_correlation=_rho(cfg), symmetric=link.symmetric,
                                           seed=seed, steps=_needs_steps(cfg), channel=link.channel), link.history)
             for k in layouts}
@@ -199,6 +200,28 @@ def _shifts(cfg) -> dict:
     if not d.enabled or not d.get('shifts'):
         return {}
     return {name: (OmegaConf.to_container(s.policy), float(s.get('epsilon', cfg.rollouts.epsilon))) for name, s in d.shifts.items()}
+
+
+def _planner(cfg) -> dict | None:
+    """`planner`: the calibration and test layouts as the world model plans in them (deploy.py's `record.dir`): their
+    channels (`layouts`), trajectories, and the env config that builds them (`env`: `planner.variations`)."""
+    p = cfg.get('planner')
+    if not p or not p.enabled:
+        return None
+    root = Path(to_absolute_path(p.data_dir))
+    return dict(layouts=root / 'layouts', trajectories=root / p.trajectories,
+                env=OmegaConf.merge(cfg.env, {'variations': list(p.variations or [])}))
+
+
+def _check_planner(cfg):
+    "What the planner's calibration and test layouts cannot be combined with (they are other layouts than comm's for the same seeds)."
+    if _planner(cfg) is None:
+        return
+    clash = [name for name, on in (('deployment.enabled', cfg.deployment.enabled), ('continual.enabled', cfg.continual.enabled),
+                                   ('monte_carlo.runs > 1 with monte_carlo.resplit', cfg.monte_carlo.runs > 1 and cfg.monte_carlo.resplit))
+             if on]
+    if clash:
+        raise ValueError(f"planner.enabled: the calibration and test layouts are the planner's, not comm's; turn off {', '.join(clash)}")
 
 
 def _taus(cfg) -> list:
@@ -313,9 +336,10 @@ def _over_layouts(cfg) -> dict:
 
 
 def network(cfg, data, saved, sets, comparison, fitted, layouts, seed) -> dict:
-    "`compare_network` for each of `evaluation.network_targets`, on `layouts`."
-    e = cfg.evaluation
-    return {float(t): compare_network(saved, sets, data / 'layouts', data / 'trajectories', layouts, comparison=comparison,
+    "`compare_network` for each of `evaluation.network_targets`, on `layouts` (test layouts: the planner's, with `planner`)."
+    e, planner = cfg.evaluation, _planner(cfg)
+    layout_dir, trajectory_dir = (planner['layouts'], planner['trajectories']) if planner else (data / 'layouts', data / 'trajectories')
+    return {float(t): compare_network(saved, sets, layout_dir, trajectory_dir, layouts, comparison=comparison,
                                       target=float(t), fitted=fitted, fading=cfg.link.fading, channel=cfg.link.channel,
                                       fading_correlation=_rho(cfg), symmetric=cfg.link.symmetric,
                                       message_bits=e.message_bits, bits_per_token=e.bits_per_token, seed=seed,
@@ -469,10 +493,13 @@ def main(cfg: DictConfig):
     mine_deployed = deployed[cfg.shard.index::cfg.shard.count]
     if cfg.shard.count > 1 and {'train', 'evaluate', 'continual'} & set(stages):
         raise ValueError("train, evaluate and continual read every layout: run them once (shard.count=1), after the shards' collect and trace")
+    _check_planner(cfg)
+    planner = _planner(cfg)
     budget = _budget(cfg)
     log = Log(cfg)
     log.summary({'layouts/variations': ','.join(cfg.env.get('variations') or []) or 'none',
-                 **{f'layouts/{k}': len(v) for k, v in seeds.items()}})
+                 **{f'layouts/{k}': len(v) for k, v in seeds.items()},
+                 'layouts/calibration_and_test': str(planner['trajectories']) if planner else 'rollouts'})
 
     if 'collect' in stages:
         start, r = time.time(), cfg.rollouts
@@ -510,24 +537,34 @@ def main(cfg: DictConfig):
             trace_layouts(cfg.env, mine, data / 'layouts', overwrite=t.overwrite, edits=edits, **options)
         else:
             raise ValueError(f"tracing.mode: pairs or full, not {t.mode!r}")
+        if planner:                                                   # the pairs the planner visits, in its layouts
+            planned = (seeds['calibration'] + seeds['test'])[cfg.shard.index::cfg.shard.count]
+            trace_visited_pairs(planner['env'], planner['trajectories'], planned, planner['layouts'], **options)
+            logger.info(f"{len(planned)} of the planner's layouts traced in {planner['layouts']}")
         pairs = sum(len(np.load(p)['H']) for k in mine
                     if (p := data / 'layouts' / (f'pairs_{k}.npz' if t.mode == 'pairs' else f'layout_{k}.npz')).exists())
         logger.info(f"{len(mine)} layouts' channels in {data / 'layouts'} ({pairs} traced, {time.time() - start:.0f} s)")
         log.summary({'trace/variant': variant, 'trace/layouts': len(mine), 'trace/traced': pairs,
                      'trace/seconds': time.time() - start})
 
-    cache = {}                                                       # the samples per layout, per fading seed and trajectories
-    def sets_of(split: dict, seed: int, trajectories: str = 'trajectories') -> dict:
+    def source(name: str, trajectories: str | None) -> tuple:
+        "A split's channels and trajectories: `data`'s (`trajectories` there), or the planner's for calibration and test."
+        if trajectories is None and planner and name in ('calibration', 'test'):
+            return planner['layouts'], planner['trajectories']
+        return data / 'layouts', data / (trajectories or 'trajectories')
+
+    cache = {}                                                       # the samples per layout, per fading seed and source
+    def sets_of(split: dict, seed: int, trajectories: str | None = None) -> dict:
         if cfg.link.fading is None:
             seed = cfg.link.seed                                     # no fading: the samples don't depend on the seed
-        key = (seed, trajectories)
-        if key not in cache:
-            for k in [k for k in cache if k[0] != seed]:
-                del cache[k]
-            cache[key] = {}
-        need = [k for v in split.values() for k in v if k not in cache[key]]
-        cache[key].update(_per_layout(cfg, data, need, seed, trajectories))
-        out = {k: _join(cache[key], v) for k, v in split.items()}
+        for k in [k for k in cache if k[0] != seed]:
+            del cache[k]
+        out = {}
+        for name, layouts in split.items():
+            per = cache.setdefault((seed, source(name, trajectories)), {})
+            need = [k for k in layouts if k not in per]
+            per.update(_per_layout(cfg, source(name, trajectories), need, seed))
+            out[name] = _join(per, layouts)
         if 'train' in out:                                           # training: each layout's first rollouts.episodes
             keep = out['train']['episode'] < cfg.rollouts.episodes
             out['train'] = {k: v[keep] for k, v in out['train'].items()}

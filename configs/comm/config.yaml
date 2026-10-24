@@ -23,6 +23,14 @@ layouts:                       # reset seeds [start, stop): train the predictor 
   calibration: [200, 230]
   test: [230, 260]
 
+planner:                       # κ, τ and λ chosen, and judged, on the deployed planner's own movement: the calibration and test
+                               # layouts' trajectories recorded by deploy.py (record.dir), in the world model's layouts; training
+                               # stays on `rollouts`' data. Needs deployment, continual and the Monte Carlo resplit off.
+  enabled: false
+  data_dir: /scratch/project_2009050/datasets/findgoal/deploy_fixed   # deploy.py's data_dir: layouts/ (their pairs traced here)
+  trajectories: trajectories_planner   # in data_dir: deploy.py's record.dir (trajectories_<layout>.npz)
+  variations: []               # the world model's layouts (configs/deploy's env.variations): other layouts than comm's for the same seeds
+
 shard:                         # collect and trace only every count-th layout from index (SLURM arrays); train and evaluate: count 1
   index: 0
   count: 1

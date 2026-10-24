@@ -30,6 +30,8 @@ model:
 trainer:
   _target_: c3jepa_wm.trainers.wm_tune.WMFinetuner
   epochs: ${pipeline.max_epochs} # Automatically grabs 100
+  project_name: ${logging_params.project_name}   # the checkpoints in <ckp_dir>/<project_name>/job_<id>/ (else the trainer's
+  ckp_dir: ${logging_params.ckp_dir}             # defaults: mains/checkpoints/c3jepa_wm/, on /projappl)
   wm_lr: ${pipeline.wm_lr}             # Automatically grabs 1e-4
   history_size: ${pipeline.history_size} # Automatically grabs 3
   num_preds: 1

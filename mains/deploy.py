@@ -8,6 +8,11 @@ model as each agent's planning cost). Writes <out_dir>/results.json and logs to 
 the episodes' length and return and, over a link, its reliability and power.
 
     python deploy.py checkpoints.jepa=... checkpoints.vqvae=...
+
+With `record.dir`, one method's episodes are also kept as comm_power's trajectories (every agent's cell and heading at
+every step, `trajectories_<layout>.npz`), for choosing κ, τ and λ on the planner's own movement (comm_power's `planner`):
+
+    python deploy.py methods=['perfect channel'] layouts=[200,260] episodes=600 record.dir=.../trajectories_planner ...
 """
 import json
 import os
@@ -27,7 +32,8 @@ from stable_marl.policy import PlanConfig, WorldModelPolicy
 from c3jepa_wm.comm.channel_data import PairCache, fading_correlation
 from c3jepa_wm.comm.evaluation import load_lambda_policies
 from c3jepa_wm.comm.power_control import load_power_control
-from c3jepa_wm.evaluators.deploy import ActionSubset, C3WMCommunication, C3WMCost, c3wm_link, deploy, jepa_transform, vq_tokens
+from c3jepa_wm.evaluators.deploy import (ActionSubset, C3WMCommunication, C3WMCost, TrajectoryRecorder, c3wm_link, deploy,
+                                         jepa_transform, save_trajectories, vq_tokens)
 from c3jepa_wm.planners.mpc import DiscreteCEMSolver
 from c3jepa_wm.utils.env_utils import LayoutWrapper
 
@@ -84,8 +90,10 @@ def main(cfg: DictConfig):
         link = None if method in ('no communication', 'perfect channel') else \
             c3wm_link(method, cache_for, saved, crc=cfg.link.crc, rho=rho(cfg), rician=cfg.link.rician, policies=policies,
                       policy=cfg.link.lambda_policy.name, target=cfg.link.lambda_policy.target)
+        record = [TrajectoryRecorder] if cfg.record.dir and method == cfg.record.method else []
         return sm.World(cfg.env_id, num_envs=cfg.num_envs, goal_conditioned=True, **world_kwargs,
                         pre_wrappers=[lambda e: LayoutWrapper(e, layouts, variations=tuple(env_cfg.get('variations') or ())),
+                                      *record,
                                       lambda e: C3WMCommunication(e, None if silent else tokens, link,
                                                                   max_age=jepa.predictor.max_age),
                                       lambda e: ActionSubset(e, cfg.actions)])
@@ -104,8 +112,15 @@ def main(cfg: DictConfig):
                                                    history_len=cfg.pipeline.history_size),
                                 transform={'pixels': jepa_transform, 'goal': jepa_transform}, history_keys=HISTORY_KEYS)
 
+    if cfg.record.dir and cfg.record.method not in cfg.methods:
+        raise ValueError(f"record.method ({cfg.record.method!r}) must be one of methods {list(cfg.methods)}")
     results = deploy(make_world, make_policy, list(cfg.methods), cfg.episodes, cfg.seed,
                      saved['budget'] if saved is not None else None)
+    for method, r in results.items():                               # the recorded movement, as comm_power's trajectories
+        if 'trajectories' in r:
+            episodes = r.pop('trajectories')
+            paths = save_trajectories(episodes, to_absolute_path(cfg.record.dir))
+            logger.info(f"{method}: {len(episodes)} episodes' trajectories in {len(paths)} layouts, {to_absolute_path(cfg.record.dir)}")
     for cache in caches.values():                                   # the pairs traced on the way
         if cache.unsaved:
             cache.save()

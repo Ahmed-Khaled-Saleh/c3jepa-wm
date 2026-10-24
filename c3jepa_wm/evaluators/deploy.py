@@ -29,7 +29,8 @@ POSE = 3                                                            # and its po
 
 # %% auto #0
 __all__ = ['MESSAGE_TOKENS', 'POSE', 'IMAGENET', 'OnlineRicianFading', 'C3WMCommunication', 'vq_tokens', 'c3wm_link',
-           'ActionSubset', 'jepa_transform', 'C3WMCost', 'find_wrapper', 'deploy']
+           'ActionSubset', 'jepa_transform', 'C3WMCost', 'TrajectoryRecorder', 'save_trajectories', 'find_wrapper',
+           'deploy']
 
 # %% ../../nbs/07e_evaluators.deploy.ipynb #e7000006
 class OnlineRicianFading(Fading):
@@ -278,6 +279,86 @@ class C3WMCost(nn.Module):
             costs.append(self.model.criterion(info))
         return torch.stack(costs, dim=-1)
 
+# %% ../../nbs/07e_evaluators.deploy.ipynb #e7000020
+def _over(terminated, truncated) -> bool:
+    "Whether an env's episode is over: every agent terminated or truncated (stable-marl's `episode_done`)."
+    flags = lambda d: np.array(list(d.values()) if isinstance(d, dict) else d, bool)
+    return bool((flags(terminated) | flags(truncated)).all())
+
+class TrajectoryRecorder(gym.Wrapper):
+    """Every agent's cell and heading at every step of each episode, as `comm.channel_data.collect_trajectories` keeps
+    them (-1 for an agent off the grid or done; the state before each action, not the one after the last), with the
+    episode's reset seed and layout (`utils.env_utils.LayoutWrapper`'s): the movement of whatever policy plays, e.g. the
+    planner's, for `comm_power`'s calibration (`save_trajectories`). `episodes` holds the finished ones; one cut short
+    by a reset is dropped."""
+
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self.episodes, self._current = [], None
+
+    def _state(self):
+        u = self.env.unwrapped
+        cells, dirs = np.full((len(u.agents), 2), -1, np.int16), np.full(len(u.agents), -1, np.int8)
+        for i, agent in enumerate(u.agents):
+            if not agent.state.terminated and tuple(agent.state.pos) != (-1, -1):
+                cells[i], dirs[i] = agent.state.pos, int(agent.state.dir)
+        return cells, dirs
+
+    def reset(self, *, seed=None, options=None):
+        from c3jepa_wm.utils.env_utils import LayoutWrapper
+        out = self.env.reset(seed=seed, options=options)
+        layout = find_wrapper(self.env, LayoutWrapper)
+        self._current = dict(seed=None if seed is None else int(seed), layout=None if layout is None else layout.layout,
+                             steps=[self._state()])
+        return out
+
+    def step(self, actions):
+        out = self.env.step(actions)
+        if self._current is not None:
+            if _over(out[2], out[3]):
+                c = self._current
+                self.episodes.append(dict(seed=c['seed'], layout=c['layout'], cells=np.stack([s[0] for s in c['steps']]),
+                                          dirs=np.stack([s[1] for s in c['steps']])))
+                self._current = None
+            else:
+                self._current['steps'].append(self._state())
+        return out
+
+def _saved_episodes(path, layout: int) -> list:
+    "The episodes of a `save_trajectories` file, each cut at its end (its last step with an agent on the grid)."
+    z = np.load(path)
+    out = []
+    for seed, cells, dirs in zip(z['seeds'], z['cells'], z['dirs']):
+        n = int(np.flatnonzero((cells >= 0).all(-1).any(-1)).max()) + 1
+        out.append(dict(seed=int(seed), layout=layout, cells=cells[:n], dirs=dirs[:n]))
+    return out
+
+def save_trajectories(episodes: list, out_dir) -> list:
+    """`TrajectoryRecorder`'s episodes as `comm.channel_data.collect_trajectories`' files, which `build_dataset` reads:
+    per layout `trajectories_<layout>.npz` with `cells` (episodes, steps, agents, 2) and `dirs` (episodes, steps, agents),
+    -1 past an episode's end, the episodes in the order of their seeds (`seeds`), `behaviour` 'planner'. Added to a
+    layout's file if there is one (an episode of the same seed replaced), so the episodes can be played in several jobs."""
+    from pathlib import Path
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    by_layout = {}
+    for e in episodes:
+        by_layout.setdefault(int(e['layout']), {})[int(e['seed'])] = e
+    paths = []
+    for layout, new in sorted(by_layout.items()):
+        path = out_dir / f'trajectories_{layout}.npz'
+        old = {e['seed']: e for e in _saved_episodes(path, layout)} if path.exists() else {}
+        eps = [{**old, **new}[s] for s in sorted({**old, **new})]
+        steps, agents = max(len(e['cells']) for e in eps), eps[0]['cells'].shape[1]
+        cells = np.full((len(eps), steps, agents, 2), -1, np.int16)
+        dirs = np.full((len(eps), steps, agents), -1, np.int8)
+        for k, e in enumerate(eps):
+            cells[k, :len(e['cells'])], dirs[k, :len(e['dirs'])] = e['cells'], e['dirs']
+        np.savez_compressed(path, cells=cells, dirs=dirs, behaviour=np.array(['planner'] * len(eps)), layout=layout,
+                            seeds=np.array([e['seed'] for e in eps]))
+        paths.append(path)
+    return paths
+
 # %% ../../nbs/07e_evaluators.deploy.ipynb #e7000011
 def find_wrapper(env, cls):
     "The wrapper of type `cls` in `env`'s chain (None if there is none)."
@@ -305,6 +386,7 @@ def deploy(
 ) -> dict:
     """Per method: the episodes' success rate, return and length (`World.evaluate`) and, for the methods sending over a
     link, its metrics: reached, power (× perfect CSI's), withheld, intact (every token right), wrong tokens, garbled.
+    With a `TrajectoryRecorder` in the world's envs, also the episodes' movement (`trajectories`, one per seed played).
     The episodes are played in rounds of the world's `num_envs`, all starting together (`reset_mode='wait'`): the envs
     planned for at once then always have histories of the same length (an env starting while others are midway would
     have its history padded with copies of its first frame, which the world model never saw)."""
@@ -319,6 +401,13 @@ def deploy(
         result = _merged(parts)
         rows = [r for env in world.envs.envs for r in (find_wrapper(env, C3WMCommunication).records or [])]
         result['link'] = network_metrics(rows, budget, MESSAGE_TOKENS, [0.0]) if rows and budget is not None else None
+        recorders = [r for env in world.envs.envs if (r := find_wrapper(env, TrajectoryRecorder)) is not None]
+        if recorders:                                               # each seed played once (an idle env's reset has none)
+            played, kept = set(int(s) for s in result['seeds']), {}
+            for e in (e for r in recorders for e in r.episodes):
+                if e['seed'] in played:
+                    kept.setdefault(e['seed'], e)
+            result['trajectories'] = [kept[s] for s in sorted(kept)]
         world.close()
         out[method] = result
     return out
