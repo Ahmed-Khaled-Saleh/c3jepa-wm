@@ -9,12 +9,14 @@ Docs: https://Ahmed-Khaled-Saleh.github.io/c3jepa-wm/evaluators.deploy.html.md""
 from __future__ import annotations
 
 import math
+import time
 from typing import Callable
 
 import gymnasium as gym
 import numpy as np
 import torch
 from gymnasium import spaces
+from loguru import logger
 from torch import nn
 
 from comm_core import Fading
@@ -389,15 +391,22 @@ def deploy(
     With a `TrajectoryRecorder` in the world's envs, also the episodes' movement (`trajectories`, one per seed played).
     The episodes are played in rounds of the world's `num_envs`, all starting together (`reset_mode='wait'`): the envs
     planned for at once then always have histories of the same length (an env starting while others are midway would
-    have its history padded with copies of its first frame, which the world model never saw)."""
+    have its history padded with copies of its first frame, which the world model never saw). Each round is logged:
+    the episodes played, their success so far, the seconds a round and the time left at that pace."""
     from c3jepa_wm.comm.evaluation import network_metrics
     out = {}
     for method in methods:
         world = make_world(method)
         world.set_policy(make_policy(method))
-        n = world.num_envs
-        parts = [world.evaluate(episodes=min(n, episodes - start), seed=seed + start, reset_mode='wait')
-                 for start in range(0, episodes, n)]
+        n, parts, began = world.num_envs, [], time.time()
+        for start in range(0, episodes, n):
+            parts.append(world.evaluate(episodes=min(n, episodes - start), seed=seed + start, reset_mode='wait'))
+            done, elapsed = start + len(parts[-1]['seeds']), time.time() - began
+            success = np.concatenate([p['episode_successes'] for p in parts]).mean()
+            length = np.concatenate([p['episode_lengths'] for p in parts]).mean()
+            logger.info(f"{method}: {done}/{episodes} episodes, success {100 * success:.1f}%, mean length {length:.0f}; "
+                        f"{elapsed / len(parts):.0f} s a round, {elapsed / 60:.1f} min so far, "
+                        f"~{elapsed / done * (episodes - done) / 60:.0f} min left")
         result = _merged(parts)
         rows = [r for env in world.envs.envs for r in (find_wrapper(env, C3WMCommunication).records or [])]
         result['link'] = network_metrics(rows, budget, MESSAGE_TOKENS, [0.0]) if rows and budget is not None else None
